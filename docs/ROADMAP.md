@@ -7,7 +7,7 @@ end. Check items off as they land; don't mark a phase done until its own checkli
 
 - [x] Local repo + folder structure
 - [x] Documentation set (this file and its siblings)
-- [ ] GitHub remote created and pushed
+- [x] GitHub remote created and pushed
 - [ ] `pyproject.toml` dependencies pinned to real versions
 
 ## Phase 1 — Data profiling & ingestion
