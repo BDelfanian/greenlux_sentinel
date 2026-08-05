@@ -54,7 +54,8 @@ No raw multilingual source data was found (Morningstar UK data is English-only).
 layer is therefore a **pipeline output**: the Report Agent generates and maintains fund-summary
 text in all three languages, mirroring how Luxembourg KIID/PRIIPs documents are actually produced
 in practice. Document this as agent-generated content in any write-up — don't imply it was
-scraped pre-translated.
+scraped pre-translated. Persisted in Postgres as `fund_reports` (one row per report/language,
+`draft` → `approved` → `published` lifecycle) — see `src/greenlux_sentinel/db/schema.sql`.
 
 ## First milestone: data profiling
 

@@ -45,3 +45,20 @@ CREATE TABLE IF NOT EXISTS lu_legal_entities (
     country                 TEXT,
     fetched_at              TIMESTAMPTZ DEFAULT now()
 );
+
+-- Multilingual report storage (agents/report_agent.py; docs/DATA.md#multilingual-layer;
+-- docs/RESPONSIBLE_AI.md#human-in-the-loop-gates). One row per (report, language). The
+-- content is agent-generated, not sourced pre-translated data — see DATA.md. A report is
+-- not "final" until status = 'published', set only via publish_report() after human approval.
+CREATE TABLE IF NOT EXISTS fund_reports (
+    report_id               UUID NOT NULL DEFAULT gen_random_uuid(),
+    fund_id                 TEXT REFERENCES funds(fund_id),
+    language                TEXT NOT NULL,   -- 'en' | 'fr' | 'de'
+    content                 TEXT NOT NULL,
+    citations               JSONB,           -- tool-call results the numeric claims trace back to
+    status                  TEXT NOT NULL DEFAULT 'draft',  -- 'draft' | 'approved' | 'published' | 'rejected'
+    created_at              TIMESTAMPTZ DEFAULT now(),
+    approved_by             TEXT,
+    approved_at             TIMESTAMPTZ,
+    PRIMARY KEY (report_id, language)
+);

@@ -13,6 +13,11 @@ Responsibility (docs/ARCHITECTURE.md#agent-graph-langgraph):
 HUMAN-IN-THE-LOOP GATE (docs/RESPONSIBLE_AI.md#human-in-the-loop-gates):
     The draft is not exposed as final output until a human explicitly approves it.
 
+Persistence: one row per (report_id, language) in the `fund_reports` table
+(db/schema.sql) — draft_report() inserts rows with status='draft'; publish_report()
+flips matching rows to status='published' after human approval. `report_id` is shared
+across the three language rows of one report.
+
 TODO(Phase 4):
     - Draft-generation prompt per language
     - Wire the tool-sourced-numbers validator before returning a draft
@@ -23,10 +28,12 @@ from __future__ import annotations
 
 
 def draft_report(fund_id: str) -> dict:
-    """Return {"en": str, "fr": str, "de": str, "citations": list}. Not yet implemented."""
+    """Insert draft rows into fund_reports; return {"report_id": str, "en": str, "fr": str,
+    "de": str, "citations": list}. Not yet implemented."""
     raise NotImplementedError("Phase 4 — see docs/ROADMAP.md")
 
 
-def publish_report(draft_id: str, approved_by: str) -> None:
-    """Mark a human-approved draft as final/published. Not yet implemented."""
+def publish_report(report_id: str, approved_by: str) -> None:
+    """Set fund_reports.status='published' for all languages of report_id, after human
+    approval. Not yet implemented."""
     raise NotImplementedError("Phase 4 — see docs/ROADMAP.md")
