@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Data (raw/processed datasets are downloaded, not committed)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Azure / IaC
+.azure/
+*.tfstate
+*.tfstate.backup
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

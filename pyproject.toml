@@ -1,0 +1,39 @@
+[project]
+name = "greenlux-sentinel"
+version = "0.1.0"
+description = "Agentic greenwashing-risk intelligence for Luxembourg-domiciled investment funds"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+# NOTE: versions intentionally left unpinned during scaffolding (Phase 0).
+# Pin exact versions once Phase 1 (data ingestion) starts and the real
+# LangChain/LangGraph/MCP API surface in use is confirmed against docs.
+dependencies = [
+    "langchain",
+    "langgraph",
+    "langsmith",
+    "langchain-openai",
+    "mcp",
+    "psycopg[binary]",
+    "azure-cosmos",
+    "azure-identity",
+    "azure-keyvault-secrets",
+    "pandas",
+    "scikit-learn",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "jupyter",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
