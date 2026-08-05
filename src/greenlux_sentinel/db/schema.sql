@@ -1,26 +1,32 @@
 -- Tier 1 schema (docs/DATA.md#two-tier-data-architecture)
--- PLACEHOLDER: column names/types below are best-guess from the Kaggle dataset description
--- and MUST be reconciled against the real downloaded CSV in Phase 1 (notebooks/01_data_profiling)
--- before this is treated as final. Do not add an "sfdr_article" column — see
--- docs/DATA.md#ground-truth-methodology.
+-- Reconciled against the real downloaded CSVs in Phase 1 (notebooks/01_data_profiling) —
+-- see docs/DATA.md#datasets for what changed vs. the original best-guess shape (no
+-- sharpe/treynor/alpha/beta in the real Morningstar export; no management_company or
+-- domicile columns either, both derived in etl/load_funds_postgres.py). Do not add an
+-- "sfdr_article" column — see docs/DATA.md#ground-truth-methodology.
 
 CREATE TABLE IF NOT EXISTS funds (
-    fund_id                 TEXT PRIMARY KEY,
-    isin                    TEXT,
+    fund_id                 TEXT PRIMARY KEY,       -- Morningstar `ticker` (an internal fund/share-class ID, not a market ticker)
+    isin                    TEXT,                    -- not unique across share classes — reference only, not a join key
     name                    TEXT NOT NULL,
-    fund_type               TEXT,          -- 'mutual_fund' | 'etf'
-    management_company      TEXT,
-    domicile_country        TEXT,          -- expected ISO country code, e.g. 'LU'
+    fund_type               TEXT NOT NULL,           -- 'mutual_fund' | 'etf' (from source file, not a raw column)
+    management_company      TEXT,                    -- best-effort, parsed from `name` — ~47% coverage, see docs/DATA.md
+    domicile_country        TEXT,                    -- derived from ISIN country prefix (no domicile column in source)
     category                TEXT,          -- Morningstar category
     currency                TEXT,
     total_net_assets        NUMERIC,
     ongoing_cost            NUMERIC,
-    sustainability_rating   NUMERIC,       -- Morningstar Sustainability Rating (claimed profile)
+    sustainability_rating   NUMERIC,       -- Morningstar Sustainability Rating, 1-5 globes (claimed profile)
+    sustainability_score    NUMERIC,       -- underlying 0-100 portfolio sustainability score behind the globe rating
+    environmental_score     NUMERIC,       -- Morningstar's own portfolio-level E/S/G subscores (claimed side —
+    social_score            NUMERIC,       -- compare against Tier 2 holdings-implied E/S/G, not a substitute for it)
+    governance_score        NUMERIC,
     return_ytd              NUMERIC,
-    sharpe_ratio            NUMERIC,
-    treynor_ratio           NUMERIC,
-    alpha                   NUMERIC,
-    beta                    NUMERIC,
+    return_3y                NUMERIC,
+    return_5y                NUMERIC,
+    return_10y               NUMERIC,
+    quarters_up               INTEGER,
+    quarters_down             INTEGER,
     ingested_at             TIMESTAMPTZ DEFAULT now()
 );
 

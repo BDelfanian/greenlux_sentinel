@@ -1,0 +1,5 @@
+ticker,isin,fund_name,category,fund_size_currency,fund_size,ongoing_cost,sustainability_rank,sustainability_score,environmental_score,social_score,governance_score,fund_trailing_return_ytd,fund_trailing_return_3years,fund_trailing_return_5years,fund_trailing_return_10years,quarters_up,quarters_down
+GRNENERGY,LU2100000001,Amundi ETF - Green Energy Transition ETF,Sector Equity Alternative Energy,EUR,320000000,0.35,5,90.1,88.0,91.5,90.8,-4.20,3.10,4.50,,18,6
+GLBESG50,LU2100000002,iShares - Global ESG Leaders 50 ETF,Global Large-Cap Blend Equity,USD,1780000000,0.25,4,75.6,70.2,78.9,77.0,14.60,18.90,17.20,13.50,17,7
+EUCLEAN,LU2100000003,Lyxor - Europe Clean Transition ETF,Sector Equity Industrial Materials,EUR,98000000,0.40,4,68.9,65.0,70.1,71.2,2.10,6.80,7.10,,15,9
+WLDSUS,LU2100000004,Xtrackers - World Sustainable Leaders ETF,Global Large-Cap Blend Equity,USD,540000000,0.30,3,55.4,52.0,58.1,56.0,10.90,14.30,13.60,11.10,14,10

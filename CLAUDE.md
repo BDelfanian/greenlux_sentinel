@@ -69,6 +69,26 @@ without checking with the user first.
 
 ## Current phase
 
-Scaffolding — see [docs/ROADMAP.md](docs/ROADMAP.md) for the phase checklist. Don't assume any
-agent, MCP server, or DB schema in `src/` is implemented beyond its docstring/TODO until the
-roadmap says so.
+See [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) (newest entry first) for exactly what's been
+done and what's next — read it before starting new work, alongside [docs/ROADMAP.md](docs/ROADMAP.md)
+for the phase checklist. Don't assume any agent, MCP server, or DB schema in `src/` is implemented
+beyond its docstring/TODO until the roadmap and progress log say so.
+
+## Session continuity — keep the progress log current
+
+At the end of each roadmap phase (or any substantial chunk of work, even mid-phase), append a new
+entry to the **top** of [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) — don't rewrite past entries.
+Each entry covers:
+
+1. **Done** — what was actually completed, concretely (files touched, what was verified and how).
+2. **Deviations from the original plan** — anywhere the real implementation diverged from what
+   CLAUDE.md/ROADMAP.md/DATA.md/ARCHITECTURE.md originally assumed, and why. This is the most
+   important part: it's what stops a fresh session from re-deriving (or contradicting) a decision
+   already made for a reason.
+3. **Next step** — the concrete next action, specific enough that a new chat with no other context
+   could start there.
+
+Also update `docs/ROADMAP.md` checkboxes in the same pass — the log explains *why/what changed*,
+the roadmap tracks *what's checked off*. If a deviation changes a decision recorded elsewhere
+(e.g. a schema assumption in DATA.md turns out wrong), update that doc directly too; don't leave
+the correction only in the log.

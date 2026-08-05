@@ -1,19 +1,153 @@
 """Tier 1 loader — European Funds dataset from Morningstar (Kaggle CSV) -> Postgres.
 
 Source: https://www.kaggle.com/datasets/stefanoleone992/european-funds-dataset-from-morningstar
-See docs/DATA.md#datasets for the expected shape (~57.6k mutual funds + ~9.5k ETFs).
+Ships as two files (57,603 mutual funds + 9,495 ETFs, disjoint `ticker` namespaces — see
+docs/DATA.md#datasets), reconciled here against notebooks/01_data_profiling findings:
 
-TODO(Phase 1):
-    - Confirm real column names against the downloaded CSV in notebooks/01_data_profiling
-    - Load into the schema defined in db/schema.sql
-    - Do NOT add a literal "sfdr_article" column — see docs/DATA.md#ground-truth-methodology
+    - No `management_company` column. Names mostly follow "<Company> - <Fund> <Share Class>"
+      (~47% of mutual fund rows) — parsed on a best-effort basis, null when absent. Don't
+      treat it as authoritative; that's what GLEIF legal-name grounding is for.
+    - No fund domicile column. Derived from the ISIN's 2-letter country prefix — the
+      standard practical proxy (real distribution: mutual funds ~58% LU / ~21% IE / ~19% GB;
+      ETFs ~51% IE / ~33% LU).
+    - No sharpe_ratio/treynor_ratio/alpha/beta — not present in the real export. Replaced
+      with the trailing-return and up/down-quarter fields that actually exist.
+    - `sustainability_rank` (1-5 globes) is the claimed rating docs/DATA.md refers to as
+      `claimed_sustainability_rating`; `sustainability_score` and the E/S/G subscores are
+      Morningstar's own portfolio-level score behind it — still the *claimed* side, not a
+      substitute for the Tier 2 holdings-implied comparison.
+
+Does NOT add a literal "sfdr_article" column — see docs/DATA.md#ground-truth-methodology.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pandas as pd
+
+from greenlux_sentinel.db.audit import write_audit_log
+
+if TYPE_CHECKING:
+    import psycopg
+
+# raw CSV header -> funds table column (db/schema.sql). `fund_type`, `domicile_country`, and
+# `management_company` are derived separately, not a 1:1 rename — see transform().
+RAW_COLUMN_MAP: dict[str, str] = {
+    "ticker": "fund_id",
+    "isin": "isin",
+    "fund_name": "name",
+    "category": "category",
+    "fund_size_currency": "currency",
+    "fund_size": "total_net_assets",
+    "ongoing_cost": "ongoing_cost",
+    "sustainability_rank": "sustainability_rating",
+    "sustainability_score": "sustainability_score",
+    "environmental_score": "environmental_score",
+    "social_score": "social_score",
+    "governance_score": "governance_score",
+    "fund_trailing_return_ytd": "return_ytd",
+    "fund_trailing_return_3years": "return_3y",
+    "fund_trailing_return_5years": "return_5y",
+    "fund_trailing_return_10years": "return_10y",
+    "quarters_up": "quarters_up",
+    "quarters_down": "quarters_down",
+}
+
+_NUMERIC_COLUMNS = [
+    "total_net_assets",
+    "ongoing_cost",
+    "sustainability_rating",
+    "sustainability_score",
+    "environmental_score",
+    "social_score",
+    "governance_score",
+    "return_ytd",
+    "return_3y",
+    "return_5y",
+    "return_10y",
+    "quarters_up",
+    "quarters_down",
+]
+
+_COLUMN_ORDER = [
+    "fund_id", "isin", "name", "fund_type", "management_company", "domicile_country",
+    "category", "currency", "total_net_assets", "ongoing_cost", "sustainability_rating",
+    "sustainability_score", "environmental_score", "social_score", "governance_score",
+    "return_ytd", "return_3y", "return_5y", "return_10y", "quarters_up", "quarters_down",
+]
+
+_UPSERT_SQL = f"""
+    INSERT INTO funds ({", ".join(_COLUMN_ORDER)})
+    VALUES ({", ".join(f"%({c})s" for c in _COLUMN_ORDER)})
+    ON CONFLICT (fund_id) DO UPDATE SET
+        {", ".join(f"{c} = EXCLUDED.{c}" for c in _COLUMN_ORDER if c != "fund_id")}
+"""
 
 
-def load(csv_path: Path) -> int:
-    """Load the Morningstar funds CSV into Postgres. Returns row count. Not yet implemented."""
-    raise NotImplementedError("Phase 1 — see docs/ROADMAP.md")
+def _derive_domicile_country(isin: pd.Series) -> pd.Series:
+    return isin.str[:2].str.upper()
+
+
+def _derive_management_company(name: pd.Series) -> pd.Series:
+    has_separator = name.str.contains(" - ", regex=False)
+    company = pd.Series(pd.NA, index=name.index, dtype="object")
+    company[has_separator] = name[has_separator].str.split(" - ", n=1).str[0].str.strip()
+    return company
+
+
+def transform(raw: pd.DataFrame, fund_type: str) -> pd.DataFrame:
+    """Map one raw Morningstar file (mutual funds OR ETFs) onto the `funds` schema.
+
+    `fund_type` ('mutual_fund' | 'etf') is supplied by the caller since it comes from which
+    file the rows are from, not a column in either file. Pure function — no I/O.
+    """
+    missing = set(RAW_COLUMN_MAP) - set(raw.columns)
+    if missing:
+        raise ValueError(f"morningstar funds CSV is missing expected columns: {sorted(missing)}")
+
+    out = raw.rename(columns=RAW_COLUMN_MAP)[list(RAW_COLUMN_MAP.values())].copy()
+    out["fund_type"] = fund_type
+    out["domicile_country"] = _derive_domicile_country(raw["isin"])
+    out["management_company"] = _derive_management_company(raw["fund_name"])
+    for col in _NUMERIC_COLUMNS:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out[_COLUMN_ORDER]
+
+
+def load(mutual_funds_csv: Path, etfs_csv: Path, conn: psycopg.Connection | None = None) -> int:
+    """Load both Morningstar fund files into Postgres. Returns total row count.
+
+    Accepts an optional open psycopg connection for testability/DI; opens (and closes) one
+    from config.get_settings() when not provided.
+    """
+    mutual_funds = transform(pd.read_csv(mutual_funds_csv, low_memory=False), "mutual_fund")
+    etfs = transform(pd.read_csv(etfs_csv, low_memory=False), "etf")
+    combined = pd.concat([mutual_funds, etfs], ignore_index=True)
+    records = combined.where(pd.notnull(combined), None).to_dict(orient="records")
+
+    owns_conn = conn is None
+    if owns_conn:
+        import psycopg
+
+        from greenlux_sentinel.config import get_settings
+
+        conn = psycopg.connect(get_settings().postgres_dsn)
+
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(_UPSERT_SQL, records)
+        write_audit_log(
+            conn,
+            agent_name="etl_agent",
+            tool_name="load_funds_postgres",
+            input_summary=f"{mutual_funds_csv}, {etfs_csv}",
+            output_summary=f"upserted {len(records)} funds",
+        )
+        conn.commit()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return len(records)

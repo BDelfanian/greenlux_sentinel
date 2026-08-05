@@ -1,0 +1,17 @@
+ticker,name,currency,exchange,industry,environment_score,social_score,governance_score,total_score,total_level
+nee,NextEra Energy Inc,USD,NEW YORK STOCK EXCHANGE INC,Utilities,650,420,380,1450,High
+enph,Enphase Energy Inc,USD,NASDAQ,Technology,600,390,350,1340,High
+fslr,First Solar Inc,USD,NASDAQ,Technology,620,370,340,1330,High
+sedg,SolarEdge Technologies Inc,USD,NASDAQ,Technology,590,360,330,1280,High
+aapl,Apple Inc,USD,NASDAQ,Technology,420,460,430,1310,High
+msft,Microsoft Corp,USD,NASDAQ,Technology,480,470,450,1400,High
+nvda,NVIDIA Corp,USD,NASDAQ,Technology,350,400,410,1160,Medium
+asml,ASML Holding NV,USD,NASDAQ,Technology,440,430,440,1310,High
+sie,Siemens AG,EUR,XETRA,Industrials,410,400,390,1200,Medium
+air,Airbus SE,EUR,EURONEXT PARIS,Industrials,300,340,360,1000,Medium
+enel,Enel SpA,EUR,BORSA ITALIANA,Utilities,430,380,370,1180,Medium
+jnj,Johnson & Johnson,USD,NEW YORK STOCK EXCHANGE INC,Healthcare,390,440,420,1250,High
+unh,UnitedHealth Group Inc,USD,NEW YORK STOCK EXCHANGE INC,Healthcare,310,330,390,1030,Medium
+ko,Coca-Cola Co,USD,NEW YORK STOCK EXCHANGE INC,Consumer Staples,280,350,400,1030,Medium
+pep,PepsiCo Inc,USD,NASDAQ,Consumer Staples,300,360,405,1065,Medium
+xom,Exxon Mobil Corp,USD,NEW YORK STOCK EXCHANGE INC,Energy,200,250,320,770,Medium

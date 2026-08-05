@@ -1,0 +1,21 @@
+etf_symbol,etf_title,as_of,holding_symbol,holding_name,weight_pct,shares,market_value_usd
+GRNENERGY,Green Energy Transition ETF,9:50 am ET 07/09/2025,NEE,"{'t': 'span', 'a': {}, 'c': ['NextEra Energy Inc']}",0.0980,4200000,380000000
+GRNENERGY,Green Energy Transition ETF,9:50 am ET 07/09/2025,ENPH,"{'t': 'span', 'a': {}, 'c': ['Enphase Energy Inc']}",0.0840,1900000,260000000
+GRNENERGY,Green Energy Transition ETF,9:50 am ET 07/09/2025,FSLR,"{'t': 'span', 'a': {}, 'c': ['First Solar Inc']}",0.0790,1100000,210000000
+GRNENERGY,Green Energy Transition ETF,9:50 am ET 07/09/2025,VWS,"{'t': 'span', 'a': {}, 'c': ['Vestas Wind Systems A/S']}",0.0650,3000000,180000000
+GRNENERGY,Green Energy Transition ETF,9:50 am ET 07/09/2025,SEDG,"{'t': 'span', 'a': {}, 'c': ['SolarEdge Technologies Inc']}",0.0530,900000,140000000
+GLBESG50,Global ESG Leaders 50 ETF,9:50 am ET 07/09/2025,AAPL,"{'t': 'span', 'a': {}, 'c': ['Apple Inc']}",0.0610,15000000,2900000000
+GLBESG50,Global ESG Leaders 50 ETF,9:50 am ET 07/09/2025,MSFT,"{'t': 'span', 'a': {}, 'c': ['Microsoft Corp']}",0.0590,14200000,2800000000
+GLBESG50,Global ESG Leaders 50 ETF,9:50 am ET 07/09/2025,NVDA,"{'t': 'span', 'a': {}, 'c': ['NVIDIA Corp']}",0.0480,17300000,2300000000
+GLBESG50,Global ESG Leaders 50 ETF,9:50 am ET 07/09/2025,ASML,"{'t': 'span', 'a': {}, 'c': ['ASML Holding NV']}",0.0320,1500000,1500000000
+GLBESG50,Global ESG Leaders 50 ETF,9:50 am ET 07/09/2025,ACN,"{'t': 'span', 'a': {}, 'c': ['Accenture PLC']}",0.0270,4200000,1300000000
+EUCLEAN,Europe Clean Transition ETF,9:50 am ET 07/09/2025,SIE,"{'t': 'span', 'a': {}, 'c': ['Siemens AG']}",0.0810,500000,80000000
+EUCLEAN,Europe Clean Transition ETF,9:50 am ET 07/09/2025,AIR,"{'t': 'span', 'a': {}, 'c': ['Airbus SE']}",0.0690,400000,68000000
+EUCLEAN,Europe Clean Transition ETF,9:50 am ET 07/09/2025,IBE,"{'t': 'span', 'a': {}, 'c': ['Iberdrola SA']}",0.0630,3200000,62000000
+EUCLEAN,Europe Clean Transition ETF,9:50 am ET 07/09/2025,ENEL,"{'t': 'span', 'a': {}, 'c': ['Enel SpA']}",0.0570,7100000,56000000
+EUCLEAN,Europe Clean Transition ETF,9:50 am ET 07/09/2025,VOW3,"{'t': 'span', 'a': {}, 'c': ['Volkswagen AG Pref']}",0.0440,400000,43000000
+WLDSUS,World Sustainable Leaders ETF,9:50 am ET 07/09/2025,MSFT,"{'t': 'span', 'a': {}, 'c': ['Microsoft Corp']}",0.0550,2700000,530000000
+WLDSUS,World Sustainable Leaders ETF,9:50 am ET 07/09/2025,JNJ,"{'t': 'span', 'a': {}, 'c': ['Johnson & Johnson']}",0.0490,3200000,470000000
+WLDSUS,World Sustainable Leaders ETF,9:50 am ET 07/09/2025,UNH,"{'t': 'span', 'a': {}, 'c': ['UnitedHealth Group Inc']}",0.0430,900000,410000000
+WLDSUS,World Sustainable Leaders ETF,9:50 am ET 07/09/2025,KO,"{'t': 'span', 'a': {}, 'c': ['Coca-Cola Co']}",0.0360,5900000,340000000
+WLDSUS,World Sustainable Leaders ETF,9:50 am ET 07/09/2025,PEP,"{'t': 'span', 'a': {}, 'c': ['PepsiCo Inc']}",0.0340,2000000,320000000

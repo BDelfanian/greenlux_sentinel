@@ -70,3 +70,32 @@ Before any schema is finalized, profile the real downloaded files (row counts, a
 names, null rates, ticker overlap between the holdings dataset and the ESG ratings dataset) in
 `notebooks/`. Treat everything above as the intended design, not a confirmed final schema — Kaggle
 dataset descriptions can drift from what's actually in the CSV.
+
+**Current status: done, against the real files.** `notebooks/01_data_profiling.ipynb` ran against
+the actual downloads in `data/raw/`; `db/schema.sql` and the `RAW_COLUMN_MAP` constants in
+`etl/load_funds_postgres.py` / `etl/load_esg_cosmos.py` were reconciled against real column names,
+not the original best-guess. Headline drift from the original design draft:
+
+- The Morningstar export has 132 columns per fund, not ~16 — full sector/asset allocation,
+  involvement flags, quarterly returns back to 2015, and Morningstar's own portfolio E/S/G
+  subscores, but **no** `management_company`, `domicile`, `sharpe_ratio`, `treynor_ratio`,
+  `alpha`, or `beta` column. `domicile_country` is derived from the ISIN's 2-letter country
+  prefix (sane distribution: LU/IE dominate both mutual funds and ETFs, matching real-world
+  fund-domicile geography). `management_company` is a best-effort parse of `fund_name` on the
+  `"<Company> - <Fund>"` pattern — only ~44% coverage, kept nullable, not authoritative
+  (GLEIF legal-name grounding remains authoritative for LU entity identity).
+- Real Tier 2 ticker overlap is **~14%** of unique ETF holding tickers (590/4,229) against the
+  ~700-company ESG ratings file — much lower than the ~79% used in early synthetic fixtures for
+  scaffolding. Per-ETF coverage ranges 0-90.3%, median 16%; 35 of the 99 ETFs (bond funds) have
+  zero overlap since the ESG ratings dataset only covers equities. The greenwashing-risk model
+  (Phase 2) should scope itself to the higher-coverage equity ETFs (32/99 at ≥50% coverage), not
+  attempt all 99 — see the notebook for the full per-ETF breakdown.
+- The holdings CSV stores holding names as a stringified-dict scrape artifact (e.g.
+  `"{'t': 'span', 'a': {}, 'c': ['Microsoft Corp']}"`), parsed in `load_esg_cosmos.py`.
+- The ESG ratings file's `total_score` is not a 0-100 score (observed range ~600-1536, sum of
+  three subscores) — not directly comparable to Tier 1's 0-100 `sustainability_score` without
+  normalizing first, a Phase 2 concern for the risk model.
+
+`tests/fixtures/*.csv` still hold small *synthetic* stand-ins, now matching the real column
+shapes — used for fast, deterministic unit tests of `etl/` transform logic, not a substitute for
+the profiling above.

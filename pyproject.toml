@@ -6,22 +6,23 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 
-# NOTE: versions intentionally left unpinned during scaffolding (Phase 0).
-# Pin exact versions once Phase 1 (data ingestion) starts and the real
-# LangChain/LangGraph/MCP API surface in use is confirmed against docs.
+# Phase 0 exit criterion: versions pinned to real releases (minor-pinned so patch fixes
+# flow in, major/minor bumps are a deliberate choice). Re-check when Phase 2 (agent graph)
+# starts wiring the real LangGraph/MCP API surface.
 dependencies = [
-    "langchain",
-    "langgraph",
-    "langsmith",
-    "langchain-openai",
-    "mcp",
-    "psycopg[binary]",
-    "azure-cosmos",
-    "azure-identity",
-    "azure-keyvault-secrets",
-    "pandas",
-    "scikit-learn",
-    "httpx",
+    "langchain>=0.3.27,<0.4",
+    "langgraph>=0.6.7,<0.7",
+    "langsmith>=0.4.16,<0.5",
+    "langchain-openai>=0.3.35,<0.4",
+    "mcp>=1.16.0,<2",
+    "psycopg[binary]>=3.2.10,<4",
+    "azure-cosmos>=4.9.0,<5",
+    "azure-identity>=1.25.1,<2",
+    "azure-keyvault-secrets>=4.10.0,<5",
+    "pydantic-settings>=2.11.0,<3",
+    "pandas>=2.3.3,<3",
+    "scikit-learn>=1.7.2,<2",
+    "httpx>=0.28.1,<1",
 ]
 
 [project.optional-dependencies]

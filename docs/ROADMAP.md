@@ -8,16 +8,33 @@ end. Check items off as they land; don't mark a phase done until its own checkli
 - [x] Local repo + folder structure
 - [x] Documentation set (this file and its siblings)
 - [x] GitHub remote created and pushed
-- [ ] `pyproject.toml` dependencies pinned to real versions
+- [x] `pyproject.toml` dependencies pinned to real versions
 
 ## Phase 1 — Data profiling & ingestion
 
-- [ ] Download all three Kaggle datasets, confirm actual columns against [DATA.md](DATA.md)
-- [ ] Profile ticker overlap between ETF holdings and company ESG ratings datasets
-- [ ] Finalize Postgres schema (`db/schema.sql`) based on confirmed columns
-- [ ] ETL Agent: load Morningstar funds → Postgres
-- [ ] ETL Agent: reshape + load ETF holdings/company ESG → Cosmos DB
-- [ ] Audit log table live and being written to from the first ETL run
+- [x] Download all three Kaggle datasets, confirm actual columns against [DATA.md](DATA.md)
+      (real files in `data/raw/`, profiled in `notebooks/01_data_profiling.ipynb` — see
+      [DATA.md](DATA.md#first-milestone-data-profiling) for what changed vs. the original
+      best-guess schema)
+- [x] Profile ticker overlap between ETF holdings and company ESG ratings datasets
+      (real overlap: ~14% of unique holding tickers, 0–90.3% per-ETF, median 16% — much lower
+      than the ~79% used in early synthetic fixtures; see DATA.md)
+- [x] Finalize Postgres schema (`db/schema.sql`) based on confirmed columns — reconciled
+      against the real Morningstar export (dropped sharpe/treynor/alpha/beta, which don't
+      exist in the real data; added domicile/management_company derivation + E/S/G subscores,
+      which do)
+- [x] ETL Agent: load Morningstar funds → Postgres (`etl/load_funds_postgres.py`, transform
+      logic unit-tested and smoke-tested against the full real 67k-row export; upsert path
+      unit-tested via injected connection — not yet run against a live Postgres instance)
+- [x] ETL Agent: reshape + load ETF holdings/company ESG → Cosmos DB
+      (`etl/load_esg_cosmos.py`, same caveat — unit- and smoke-tested against the full real
+      132k-row holdings file, not yet run against live Cosmos DB)
+- [x] Audit log table live and being written to from the first ETL run (`db/audit.py`,
+      called from both loaders; verified via unit test, not a live DB)
+
+**Still open before Phase 1 is fully done:** an actual Postgres/Cosmos instance (local emulator
+or Azure) to run `load()` against for real, rather than just unit/smoke-testing the transform
+logic. No Docker was available in the dev environment used so far — see Phase 2 below.
 
 ## Phase 2 — Core agents (no cloud yet, local Postgres/Cosmos emulator)
 
