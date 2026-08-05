@@ -57,6 +57,13 @@ in practice. Document this as agent-generated content in any write-up — don't 
 scraped pre-translated. Persisted in Postgres as `fund_reports` (one row per report/language,
 `draft` → `approved` → `published` lifecycle) — see `src/greenlux_sentinel/db/schema.sql`.
 
+**Postgres, not Cosmos DB, deliberately.** Early planning floated Cosmos as the natural home for
+this ("a multilingual document store") since it's schema-flexible text. Decided against it: the
+report lifecycle needs transactional draft→approved→published updates and a plain join to
+`funds`, both simpler in Postgres than as Cosmos read-modify-write. Cosmos DB's role stays
+scoped to Tier 2 ESG holdings documents (see two-tier architecture above) — one clear job, not
+two unrelated ones bolted together for the sake of touching Cosmos twice.
+
 ## First milestone: data profiling
 
 Before any schema is finalized, profile the real downloaded files (row counts, actual column
