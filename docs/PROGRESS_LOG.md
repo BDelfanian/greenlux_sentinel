@@ -10,6 +10,86 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 4 (continued) — live Power BI provisioning
+
+**Completed:** 2026-08-06
+
+**Done:** Live-verified everything the previous Phase 4 entry left deferred —
+`powerbi_server.run_dax_query`/`refresh_dataset` and `dashboard_agent.build_dax`/
+`update_dashboard`, all via the actual service-principal `ClientSecretCredential` auth path
+`powerbi_server.py` uses in production, not just mocks.
+
+- **The University of Luxembourg tenant was a dead end, confirmed two ways, not just
+  policy-blocked.** `allowedToCreateApps: false` blocks app registration outright (verified via
+  Microsoft Graph's `authorizationPolicy` and an actual blocked `az ad app create` attempt). More
+  fundamentally: pulled the tenant's full `subscribedSkus` list and found **no SKU in the tenant
+  includes a Power BI service plan at all** — the user's `M365EDU_A5_STUUSEBNFT` license doesn't
+  have Power BI, and neither does anything else the university holds. Provisioned a Power BI
+  Embedded capacity (`powerbigreenlux`, A1 SKU) in `rg-greenlux-sentinel` to test around this, but
+  a licensed identity is still required to call the Power BI API even against an Embedded
+  capacity (`UserNotLicensed`) — deleted the capacity afterward since it was billing hourly for
+  nothing usable.
+- **Moved to a separate personal Azure/Entra tenant** (`bdelfaniangmail.onmicrosoft.com`,
+  created via portal.azure.com sign-up, not the M365 Developer Program — no demo users/E5
+  licenses came bundled, unlike a proper dev-program "instant sandbox"). Confirmed
+  `allowedToCreateApps: true` and Global Administrator on this tenant before doing anything else.
+- **Hit an undocumented-to-us quirk**: the account created by Azure sign-up
+  (`bdelfanian@gmail.com`) is a Microsoft-personal-account-backed identity — `userType: Member`
+  in Graph (not a guest), but Power BI's sign-in flow explicitly refuses personal-account-backed
+  identities regardless of directory role ("You can't sign in here with a personal account").
+  Fixed by creating a genuine native member user, `pbiadmin@bdelfaniangmail.onmicrosoft.com`
+  (password-based, not MSA-federated), and assigning it Global Administrator. Power BI accepted
+  this identity; a Power BI Pro trial self-served against it landed a **Premium Per User**
+  capacity ("Premium Per User - Reserved", SKU `PP3`) — a materially better result than the
+  deleted Embedded A1 capacity, since PPU supports full workspace creation.
+- **The classic Power BI admin `GET .../admin/tenantsettings` API 404'd** even for the Global
+  Administrator (other admin endpoints like `/admin/groups`, `/admin/capacities` worked fine from
+  the same token) — traced to Fabric having its own `Fabric Administrator` directory role
+  template, separate from and not fully substitutable by Global Administrator, that wasn't
+  activated in this tenant. Sidestepped rather than chased further: the Fabric admin **portal
+  UI** (Global Admin already has access there) showed "Service principals can call Fabric public
+  APIs" already **Enabled for the entire organization** by default — exactly the permission
+  `powerbi_server.py`'s service principal needs — so no tenant-setting change was actually
+  required. Left "Service principals can create workspaces" disabled; not needed since workspace
+  creation happens under the delegated `pbiadmin` user, not the service principal.
+- Registered `greenlux-sentinel-powerbi-sp` (Entra app + service principal + client secret),
+  created a **workspace** ("GreenLux Sentinel", `240c8b23-a360-4254-95a6-5cfd230ec99a`) under
+  `pbiadmin`, added the service principal as workspace Admin (had to use the service principal's
+  **object ID**, not its `appId` — the `appId` form failed with `"Failed to get service principal
+  details from AAD"`), and created a **push dataset** ("GreenLuxSentinel",
+  `675de1c9-4820-40ed-8d25-c2a516f67b1e`) with `Funds`(fund_id, name, category) and
+  `FundRiskScores`(fund_id, risk_score, holdings_implied_esg, explanation) tables plus a
+  `fund_id` relationship, matching `bi/dax_templates.py`'s two templates. Seeded both tables with
+  real rows pulled live from the local Postgres `funds`/`fund_risk_scores` join (19 real scored
+  fund_ids, not synthetic placeholders).
+- Filled in `.env`'s `POWERBI_TENANT_ID`/`POWERBI_CLIENT_ID`/`POWERBI_CLIENT_SECRET`/
+  `POWERBI_WORKSPACE_ID`/`POWERBI_DATASET_ID`. Live-verified, through the real project code
+  (not raw `curl`): `powerbi_server.run_dax_query` for both DAX templates, `dashboard_agent.
+  build_dax`/`update_dashboard` end to end (real Azure OpenAI template classification + real
+  Power BI query + real Postgres audit-log write, confirmed via a live `audit_log` row), and
+  `powerbi_server.refresh_dataset` (returns `202 Accepted` against a push dataset — a genuine
+  no-op refresh-wise since push datasets have no upstream data source to re-pull from, but
+  confirms the API call path itself is correct; a future import-mode dataset connected live to
+  Postgres/Cosmos would be the thing that actually needs this call).
+
+**Deviations from the original plan:** None beyond what's already captured above — this entry is
+entirely the resolution of the previous entry's one open deviation (Power BI provisioning
+deferred). No code in `src/` changed this session, only `.env` (not committed) and real Azure/
+Power BI resources.
+
+**Live environment note:** Power BI now lives on a **separate tenant** from the rest of this
+project's Azure resources — `bdelfaniangmail.onmicrosoft.com` (personal dev tenant) for Power BI
+only, vs. `uniluxembourg.onmicrosoft.com` / "Azure for Students" (subscription
+`2fb7edf5-4f7b-4d24-a811-0ba717c89826`) for Postgres/Cosmos/Azure OpenAI, per CLAUDE.md's
+existing `.env`/Key Vault pattern this doesn't need any code change to accommodate, but worth
+knowing if `az login` ever needs to target the right tenant for a given resource.
+
+**Next step:** Phase 5 — Azure deployment (Bicep IaC, CI/CD, Key Vault, Azure Monitor) per
+docs/ROADMAP.md. `etl_agent.py` is still an unimplemented stub (GLEIF MCP server has been
+live-verified since Phase 3 but has no caller yet) — worth picking up alongside or before Phase 5.
+
+---
+
 ## Phase 4 — BI + reporting
 
 **Completed:** 2026-08-06

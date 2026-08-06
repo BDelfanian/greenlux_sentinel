@@ -82,12 +82,14 @@ correction note for the full story.
 
 ## Phase 4 — BI + reporting
 
-- [ ] Power BI dataset connected to Postgres/Cosmos outputs — **deferred, not blocking**: no
-      workspace/service-principal provisioned yet (student Azure tenant, needs a Fabric/Power BI
-      admin-portal toggle the user has to do themselves); see docs/PROGRESS_LOG.md
-- [x] Dashboard Agent: NL question → DAX query template selection → Power BI MCP call — unit
-      tested against a fake LLM + mocked `powerbi_server.run_dax_query`, not yet live-verified
-      (blocked on the item above)
+- [x] Power BI dataset connected to Postgres/Cosmos outputs — a push dataset (`Funds` +
+      `FundRiskScores` tables, one relationship on `fund_id`) in a Power BI workspace, seeded
+      with real rows pulled live from the local Postgres `funds`/`fund_risk_scores` tables. Not
+      an auto-refreshing pipeline (out of scope for this portfolio project) — see
+      docs/PROGRESS_LOG.md for the full provisioning story and its IDs
+- [x] Dashboard Agent: NL question → DAX query template selection → Power BI MCP call —
+      live-verified end to end (real Azure OpenAI classification + real `executeQueries` calls
+      against the live dataset via the actual service-principal auth path), plus unit tests
 - [x] Report Agent: multilingual (EN/FR/DE) draft generation + citation trail — tool-sourced-
       numbers guardrail enforced (with one retry) before a draft is returned; unit tested
 - [x] Report human-approval gate wired to a real "publish" action — `publish_report()`/
