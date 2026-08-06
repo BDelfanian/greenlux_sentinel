@@ -82,10 +82,17 @@ correction note for the full story.
 
 ## Phase 4 — BI + reporting
 
-- [ ] Power BI dataset connected to Postgres/Cosmos outputs
-- [ ] Dashboard Agent: NL question → DAX query → live dashboard update
-- [ ] Report Agent: multilingual (EN/FR/DE) draft generation + citation trail
-- [ ] Report human-approval gate wired to a real "publish" action
+- [ ] Power BI dataset connected to Postgres/Cosmos outputs — **deferred, not blocking**: no
+      workspace/service-principal provisioned yet (student Azure tenant, needs a Fabric/Power BI
+      admin-portal toggle the user has to do themselves); see docs/PROGRESS_LOG.md
+- [x] Dashboard Agent: NL question → DAX query template selection → Power BI MCP call — unit
+      tested against a fake LLM + mocked `powerbi_server.run_dax_query`, not yet live-verified
+      (blocked on the item above)
+- [x] Report Agent: multilingual (EN/FR/DE) draft generation + citation trail — tool-sourced-
+      numbers guardrail enforced (with one retry) before a draft is returned; unit tested
+- [x] Report human-approval gate wired to a real "publish" action — `publish_report()`/
+      `reject_report()` re-check every language row is still `draft` before acting, same
+      non-bypassable pattern as `query_optimizer_agent.apply_approved()`
 
 ## Phase 5 — Azure deployment
 

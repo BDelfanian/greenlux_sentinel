@@ -10,6 +10,77 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 4 — BI + reporting
+
+**Completed:** 2026-08-06
+
+**Done:**
+- Implemented `guardrails/validators.py` for real (previously a Phase 2 TODO stub):
+  `tool_sourced_numbers(draft_text, trace_tool_results)` extracts every number in generated text
+  via regex and checks it's within a small rounding tolerance of a value actually returned by a
+  tool call this run; `redact_pii(text)` does a defensive email/phone-shaped-string redaction
+  pass (conservative — requires 9+ digits so it doesn't collide with the short numeric citations,
+  e.g. a risk score or star rating, that report text is expected and validated to contain).
+- Implemented `agents/dashboard_agent.py`: `build_dax(question, llm)` has an LLM classify the
+  question into one of `bi/dax_templates.py`'s two templates (+ a parameter, e.g. top-N),
+  mirroring `sql_agent.py`'s generate-then-validate split rather than free-generating DAX text.
+  `update_dashboard()` runs the query via `powerbi_server.run_dax_query` and audit-logs the call.
+- Implemented `agents/report_agent.py`: `draft_report(fund_id)` calls `risk_agent.score_fund()`
+  and `sql_agent.ask()` to gather tool-sourced facts, has an LLM draft a short body per language
+  (EN/FR/DE) constrained to only use the supplied numbers, redacts PII, validates against
+  `tool_sourced_numbers` (one retry with a stricter prompt on failure, then raises), and appends
+  a **hand-translated** (not LLM-translated) methodology caveat per language before inserting
+  three `draft`-status rows into `fund_reports`. `publish_report()`/`reject_report()` share a
+  `_finalize_report()` helper that re-checks every language row for a report is still `draft`
+  before flipping status — the same non-bypassable re-check pattern
+  `query_optimizer_agent.apply_approved()` already established in Phase 2, applied to this
+  project's second and last human-in-the-loop gate.
+- Wired both new agents into `supervisor.py`'s graph (`dashboard`, `report` routes added to
+  `_ROUTES` and the router prompt). `report`'s route only calls `draft_report()` — never
+  `publish_report()`/`reject_report()`, deliberately: those stay direct function calls outside
+  the graph, same reasoning `query_optimizer_agent.apply_approved()` isn't a graph node either
+  (a router shouldn't be the thing deciding to publish).
+- 32 new unit tests (`test_validators.py`, `test_dashboard_agent.py`, `test_report_agent.py`,
+  plus new route coverage in `test_supervisor.py`) — all via fake LLMs / MagicMock connections,
+  no live DB or LLM needed. 132 tests passing total (up from 100), ruff clean.
+- Also found and committed Phase 3's work, which had been completed in a prior session but never
+  committed (`git status` showed it all still as uncommitted local changes at the start of this
+  session) — see the Phase 3 entry below; it's now `f0370c8` on `main`.
+
+**Deviations from the original plan:**
+- **Power BI workspace/service-principal provisioning was not done this session — deferred by
+  explicit user choice, not a blocker discovered mid-work.** `.env`'s `POWERBI_*` vars are all
+  still empty. The Azure subscription in use (`Azure for Students`, tenant
+  `uniluxembourg.onmicrosoft.com`) is a university student tenant: no confirmed Power BI
+  license, and "allow service principals to use Power BI APIs" is a tenant-wide Fabric/Power BI
+  admin-portal toggle that a student account very likely can't flip (unlike Phase 2's Azure
+  OpenAI resource, which was provisionable end-to-end via `az` CLI alone). Asked the user how to
+  proceed; chose "code first, provision later" — implement and unit-test both agents against
+  mocks now (same pattern Phase 3 already used for `powerbi_server.py` itself), or set up
+  Power BI access on their own time. **`powerbi_server.run_dax_query`/`refresh_dataset` and
+  `dashboard_agent.build_dax`/`update_dashboard` are therefore still not live-verified against a
+  real workspace** — that's the concrete gap before Phase 4 can be called fully done, not new
+  agent code.
+- Report Agent's caveat text is hand-translated into FR/DE (three hardcoded module constants),
+  not LLM-translated per report. Deliberate: this is the one piece of text RESPONSIBLE_AI.md
+  requires on every surface that shows the risk score, so its wording shouldn't be able to drift
+  session-to-session based on what an LLM produces.
+- `draft_report()` calls `risk_agent.score_fund()`, which persists a *new* `fund_risk_scores` row
+  (has its own `computed_at` timestamp) every time it's called — so drafting the same fund's
+  report twice writes two (identical-score) history rows, not an error. Same behavior
+  `risk_agent.score_fund()` already had before this session; not new, just now exercised by a
+  second caller.
+
+**Next step:** Live-verify Power BI once workspace/service-principal access exists (fill in
+`.env`'s `POWERBI_*` vars, re-run `dashboard_agent.update_dashboard()` against the real REST API,
+confirm `run_dax_query`'s row-shape assumptions hold against an actual dataset). Then Phase 5 —
+Azure deployment (Bicep IaC, CI/CD, Key Vault, Azure Monitor) per docs/ROADMAP.md. `etl_agent.py`
+is also still an unimplemented stub (GLEIF MCP server has been live-verified since Phase 3 but
+has no caller yet) — worth picking up alongside or before Phase 5 if the ETL lineage-log
+requirement needs to be demonstrated end to end.
+
+---
+
 ## Phase 3 — MCP servers
 
 **Completed:** 2026-08-06

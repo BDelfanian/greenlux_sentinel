@@ -20,7 +20,7 @@ class FakeLLM:
 
 
 class TestRouteRequest:
-    @pytest.mark.parametrize("route", ["sql", "risk", "query_optimizer"])
+    @pytest.mark.parametrize("route", ["sql", "risk", "query_optimizer", "dashboard", "report"])
     def test_recognized_route_passes_through(self, route):
         result = supervisor.route_request({"request": "anything"}, llm=FakeLLM(route))
         assert result == {"route": route}
@@ -64,6 +64,34 @@ class TestRunQueryOptimizer:
         assert result == {"result": {"proposal_id": "1"}}
 
 
+class TestRunDashboard:
+    def test_returns_result_on_success(self):
+        with patch(
+            "greenlux_sentinel.agents.dashboard_agent.update_dashboard",
+            return_value={"dax": "EVALUATE x", "dataset_id": "ds-1", "rows": []},
+        ):
+            result = supervisor.run_dashboard({"request": "average risk by category?"})
+        assert result == {"result": {"dax": "EVALUATE x", "dataset_id": "ds-1", "rows": []}}
+
+    def test_returns_error_on_failure_without_raising(self):
+        with patch("greenlux_sentinel.agents.dashboard_agent.update_dashboard", side_effect=ValueError("boom")):
+            result = supervisor.run_dashboard({"request": "q"})
+        assert result["result"] == {}
+        assert result["error"] == "boom"
+
+
+class TestRunReport:
+    def test_missing_fund_id_returns_error(self):
+        result = supervisor.run_report({"request": "q"})
+        assert "fund_id" in result["error"]
+
+    def test_returns_result_on_success(self):
+        draft = {"report_id": "R1", "en": "...", "fr": "...", "de": "...", "citations": [42.5]}
+        with patch("greenlux_sentinel.agents.report_agent.draft_report", return_value=draft):
+            result = supervisor.run_report({"request": "q", "fund_id": "F1"})
+        assert result == {"result": draft}
+
+
 class TestBuildGraph:
     def test_sql_route_end_to_end(self):
         with patch("greenlux_sentinel.agents.sql_agent.ask", return_value={"sql": "SELECT 1", "rows": [{"a": 1}]}):
@@ -88,3 +116,21 @@ class TestBuildGraph:
             final_state = graph.invoke({"request": "SELECT * FROM funds WHERE category = 'x'"})
         assert final_state["route"] == "query_optimizer"
         assert final_state["result"]["proposal_id"] == "7"
+
+    def test_dashboard_route_end_to_end(self):
+        with patch(
+            "greenlux_sentinel.agents.dashboard_agent.update_dashboard",
+            return_value={"dax": "EVALUATE x", "dataset_id": "ds-1", "rows": [{"category": "Equity"}]},
+        ):
+            graph = supervisor.build_graph(llm=FakeLLM("dashboard"))
+            final_state = graph.invoke({"request": "average risk by category?"})
+        assert final_state["route"] == "dashboard"
+        assert final_state["result"]["rows"] == [{"category": "Equity"}]
+
+    def test_report_route_end_to_end(self):
+        draft = {"report_id": "R1", "en": "...", "fr": "...", "de": "...", "citations": [53.03]}
+        with patch("greenlux_sentinel.agents.report_agent.draft_report", return_value=draft):
+            graph = supervisor.build_graph(llm=FakeLLM("report"))
+            final_state = graph.invoke({"request": "draft a report", "fund_id": "0P00018CYB"})
+        assert final_state["route"] == "report"
+        assert final_state["result"] == draft

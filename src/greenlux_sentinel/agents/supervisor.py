@@ -8,14 +8,20 @@ Responsibility (docs/ARCHITECTURE.md#agent-graph-langgraph):
 No human-in-the-loop gate here — routing itself is read-only. Gates live on the
 query-optimizer and report agents (see docs/RESPONSIBLE_AI.md#human-in-the-loop-gates).
 
-Phase 2 scope: wires the three specialist agents actually implemented so far — sql_agent,
-risk_agent, query_optimizer_agent. etl_agent/dashboard_agent/report_agent stay
-NotImplementedError stubs until Phase 3/4 (see docs/ROADMAP.md) and are not graph nodes yet.
+Phase 4 scope: wires all five read-only-or-single-gate specialist agents — sql_agent,
+risk_agent, query_optimizer_agent, dashboard_agent, report_agent. etl_agent stays a
+NotImplementedError stub (see docs/ROADMAP.md) and is not a graph node yet.
+
+report_agent's route only calls draft_report() — never publish_report()/reject_report(). The
+human-approval gate (docs/RESPONSIBLE_AI.md#human-in-the-loop-gates) is a decision made outside
+the graph, the same way query_optimizer_agent.apply_approved()/reject_proposal() are called
+directly rather than being routable — a supervisor route would let the router itself decide to
+publish, which defeats the gate.
 
 Known simplification: the router only classifies which specialist handles the request from the
-free-text question; it does not do entity extraction. A "risk" request must pass `fund_id`
-directly in the initial state (the dashboard/report agents that would normally resolve "which
-fund is this about" from conversation don't exist yet) — see route_request()'s docstring.
+free-text question; it does not do entity extraction. A "risk"/"report" request must pass
+`fund_id` directly in the initial state (no agent here resolves "which fund is this about" from
+conversation) — see route_request()'s docstring.
 """
 
 from __future__ import annotations
@@ -24,12 +30,18 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from greenlux_sentinel.agents import query_optimizer_agent, risk_agent, sql_agent
+from greenlux_sentinel.agents import (
+    dashboard_agent,
+    query_optimizer_agent,
+    report_agent,
+    risk_agent,
+    sql_agent,
+)
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-_ROUTES = ("sql", "risk", "query_optimizer")
+_ROUTES = ("sql", "risk", "query_optimizer", "dashboard", "report")
 
 _ROUTER_SYSTEM_PROMPT = """Classify the analyst's request into exactly one route. Reply with \
 ONLY the route word, nothing else.
@@ -38,8 +50,10 @@ Routes:
 - sql: a question answerable by querying the fund database (counts, comparisons, listings, lookups).
 - risk: a request specifically about a fund's Greenwashing Risk Score or its explanation.
 - query_optimizer: a request to analyze/optimize a specific slow SQL query's performance.
+- dashboard: a request to update/refresh a Power BI dashboard view for a question.
+- report: a request to draft a multilingual fund report.
 
-Reply with exactly one of: sql, risk, query_optimizer
+Reply with exactly one of: sql, risk, query_optimizer, dashboard, report
 """
 
 
@@ -98,6 +112,23 @@ def run_query_optimizer(state: SupervisorState) -> dict[str, Any]:
         return {"result": {}, "error": str(e)}
 
 
+def run_dashboard(state: SupervisorState) -> dict[str, Any]:
+    try:
+        return {"result": dashboard_agent.update_dashboard(state["request"])}
+    except Exception as e:  # noqa: BLE001
+        return {"result": {}, "error": str(e)}
+
+
+def run_report(state: SupervisorState) -> dict[str, Any]:
+    fund_id = state.get("fund_id")
+    if not fund_id:
+        return {"result": {}, "error": "report route requires a fund_id in the initial state"}
+    try:
+        return {"result": report_agent.draft_report(fund_id)}
+    except Exception as e:  # noqa: BLE001
+        return {"result": {}, "error": str(e)}
+
+
 def _select_route(state: SupervisorState) -> str:
     return state["route"]
 
@@ -109,13 +140,25 @@ def build_graph(llm: BaseChatModel | None = None):
     graph.add_node("sql", run_sql)
     graph.add_node("risk", run_risk)
     graph.add_node("query_optimizer", run_query_optimizer)
+    graph.add_node("dashboard", run_dashboard)
+    graph.add_node("report", run_report)
 
     graph.set_entry_point("route")
     graph.add_conditional_edges(
-        "route", _select_route, {"sql": "sql", "risk": "risk", "query_optimizer": "query_optimizer"}
+        "route",
+        _select_route,
+        {
+            "sql": "sql",
+            "risk": "risk",
+            "query_optimizer": "query_optimizer",
+            "dashboard": "dashboard",
+            "report": "report",
+        },
     )
     graph.add_edge("sql", END)
     graph.add_edge("risk", END)
     graph.add_edge("query_optimizer", END)
+    graph.add_edge("dashboard", END)
+    graph.add_edge("report", END)
 
     return graph.compile()
