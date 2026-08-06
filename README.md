@@ -13,7 +13,9 @@ Built as a portfolio project targeting the Luxembourg investment-fund industry, 
 SFDR disclosures and marketing materials — see [docs/DATA.md](docs/DATA.md#why-this-topic) for
 sourcing.
 
-> **Status:** scaffolding phase. See [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned.
+> **Status:** Phases 0-3 complete (data pipeline, core agents, MCP servers) — see
+> [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
+> [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for session-by-session detail.
 
 ## Why this exists
 
