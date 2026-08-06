@@ -18,6 +18,19 @@ downloads as a bare `data.csv`), so rename after extracting:
 
 GLEIF data is not downloaded — it's fetched live via the GLEIF MCP server at runtime.
 
+## `data/raw/verified_holdings/`
+
+Not from Kaggle. Five real, issuer-published UCITS ETF holdings files, fetched by running:
+
+```
+python -m greenlux_sentinel.etl.fetch_verified_holdings
+```
+
+See [docs/DATA.md#tier-2-verified-holdings-phase-2-correction](../docs/DATA.md#tier-2-verified-holdings-phase-2-correction)
+for why this exists — the original Top 100 ETF holdings dataset has no fund in Tier 1, so this
+fills in a small, real, ISIN-linked subset instead. Re-run the script any time to refresh to the
+current day's holdings.
+
 `data/processed/` holds intermediate reshaped files (e.g. the ETF-holdings/ESG join before it's
 loaded to Cosmos DB) — also gitignored, regenerate via `src/greenlux_sentinel/etl/`.
 

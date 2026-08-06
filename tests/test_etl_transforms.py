@@ -14,7 +14,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from greenlux_sentinel.etl import load_esg_cosmos, load_funds_postgres
+from greenlux_sentinel.etl import (
+    load_esg_cosmos,
+    load_funds_postgres,
+    load_verified_holdings_cosmos,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -112,6 +116,19 @@ class TestEsgCosmosTransform:
         docs = {d["etf_ticker"]: d for d in load_esg_cosmos.transform(holdings_df, esg_df)}
         assert docs["GRNENERGY"]["holdings_implied_esg_score"] == pytest.approx(1361.69, abs=0.01)
 
+    def test_missing_industry_becomes_json_safe_null(self, holdings_df, esg_df):
+        # Real data has a company with a blank `industry` cell -> pandas NaN (a float), which
+        # json.dumps happily renders as the literal `NaN` -> invalid JSON -> Cosmos rejects the
+        # whole upsert with "Failed to parse Json request". Must come through as `None`.
+        import json
+
+        esg_with_gap = esg_df.copy()
+        esg_with_gap.loc[esg_with_gap["ticker"] == "nee", "industry"] = None
+        docs = {d["etf_ticker"]: d for d in load_esg_cosmos.transform(holdings_df, esg_with_gap)}
+        nee = next(h for h in docs["GRNENERGY"]["holdings"] if h["ticker"] == "NEE")
+        assert nee["esg"]["sector"] is None
+        assert "NaN" not in json.dumps(docs["GRNENERGY"])
+
     def test_no_esg_matches_yields_null_implied_score(self, holdings_df):
         empty_esg = pd.DataFrame(
             columns=["ticker", "name", "currency", "exchange", "industry",
@@ -120,3 +137,63 @@ class TestEsgCosmosTransform:
         docs = load_esg_cosmos.transform(holdings_df, empty_esg)
         assert all(d["holdings_implied_esg_score"] is None for d in docs)
         assert all(d["esg_coverage_pct"] == 0.0 for d in docs)
+
+
+class TestVerifiedHoldingsTransform:
+    """etl/load_verified_holdings_cosmos.py — the real, issuer-scraped Tier 2 subset that
+    actually links back to Tier 1 by ISIN (see that module's docstring for why it exists)."""
+
+    def test_read_one_fund_csv_drops_non_equity_and_parses_thousands_separator(self):
+        df = load_verified_holdings_cosmos._read_one_fund_csv(
+            FIXTURES / "verified_holdings_fund_sample.csv"
+        )
+        assert "USD CASH" not in df["Name"].values  # Cash row filtered out
+        msft = df.loc[df["Ticker"] == "MSFT"].iloc[0]
+        assert msft["Weight (%)"] == pytest.approx(7.85)  # not rescaled, unlike the Kaggle loader
+
+    def test_read_one_fund_csv_blank_ticker_stays_as_missing(self):
+        df = load_verified_holdings_cosmos._read_one_fund_csv(
+            FIXTURES / "verified_holdings_fund_sample.csv"
+        )
+        foreign = df.loc[df["Name"] == "FOREIGN NO TICKER CO"].iloc[0]
+        assert pd.isna(foreign["Ticker"])
+
+    @pytest.fixture
+    def verified_holdings_df(self):
+        fund_a = load_verified_holdings_cosmos._read_one_fund_csv(
+            FIXTURES / "verified_holdings_fund_sample.csv"
+        )
+        fund_a["isin"] = "IE00TEST0001"
+        fund_a["etf_ticker"] = "TSTA"
+        return fund_a
+
+    def test_matched_holding_carries_real_esg(self, verified_holdings_df, esg_df):
+        docs = {d["isin"]: d for d in load_verified_holdings_cosmos.transform(verified_holdings_df, esg_df)}
+        msft = next(h for h in docs["IE00TEST0001"]["holdings"] if h["ticker"] == "MSFT")
+        assert msft["esg"]["total_esg_score"] == 1400
+
+    def test_unmatched_ticker_has_no_esg(self, verified_holdings_df, esg_df):
+        docs = {d["isin"]: d for d in load_verified_holdings_cosmos.transform(verified_holdings_df, esg_df)}
+        unmatched = next(h for h in docs["IE00TEST0001"]["holdings"] if h["ticker"] == "ZZZZ")
+        assert unmatched["esg"] is None
+
+    def test_blank_ticker_holding_is_json_safe_null_not_nan(self, verified_holdings_df, esg_df):
+        import json
+
+        docs = {d["isin"]: d for d in load_verified_holdings_cosmos.transform(verified_holdings_df, esg_df)}
+        foreign = next(h for h in docs["IE00TEST0001"]["holdings"] if h["name"] == "FOREIGN NO TICKER CO")
+        assert foreign["ticker"] is None
+        assert foreign["esg"] is None
+        assert "NaN" not in json.dumps(docs["IE00TEST0001"])
+
+    def test_holdings_implied_esg_score_weighted_average_of_matched_only(self, verified_holdings_df, esg_df):
+        # MSFT (weight 7.85, total_esg_score 1400) + NVDA (weight 5.00, total_esg_score 1160);
+        # ZZZZ and the blank-ticker row are unmatched and excluded from the weighted average.
+        docs = {d["isin"]: d for d in load_verified_holdings_cosmos.transform(verified_holdings_df, esg_df)}
+        expected = (7.85 * 1400 + 5.00 * 1160) / (7.85 + 5.00)
+        assert docs["IE00TEST0001"]["holdings_implied_esg_score"] == pytest.approx(expected, abs=0.01)
+
+    def test_doc_id_is_isin_not_etf_ticker(self, verified_holdings_df, esg_df):
+        docs = load_verified_holdings_cosmos.transform(verified_holdings_df, esg_df)
+        assert docs[0]["id"] == "IE00TEST0001"
+        assert docs[0]["source"] == "issuer_verified"

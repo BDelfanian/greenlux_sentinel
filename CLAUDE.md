@@ -27,10 +27,15 @@ without checking with the user first.
 
 2. **Two-tier data architecture, not a single flat join.** The Morningstar fund dataset
    (~67k funds) only has sector/asset-class allocation, not security-level holdings. The
-   greenwashing-risk model runs on a *narrower* subset (Top-100 ETF holdings joined to company-
-   level ESG ratings) where real holdings data exists. The broad fund universe powers BI/agentic-
-   SQL; the narrow subset powers the risk model. Don't collapse these into one dataset or pretend
-   the full 67k funds all have holdings-level ESG linkage.
+   greenwashing-risk model runs on a *narrower* subset where real holdings data exists. The broad
+   fund universe powers BI/agentic-SQL; the narrow subset powers the risk model. Don't collapse
+   these into one dataset or pretend the full 67k funds all have holdings-level ESG linkage.
+   **Correction (Phase 2):** the original "Top-100 ETF holdings" subset turned out to have zero
+   overlap with the Tier 1 fund table (different market entirely) and no sustainability claim of
+   its own, so it could never feed the risk model as originally planned. The risk model's real
+   Tier 2 subset is now five issuer-verified UCITS ETFs that *are* in Tier 1 — see
+   [docs/DATA.md](docs/DATA.md#tier-2-verified-holdings-phase-2-correction). The Top-100 set is
+   kept only as a separate, clearly-unlinked descriptive dataset.
 
 3. **Cosmos DB uses the NoSQL/Core (SQL) API, not Gremlin.** The sibling project
    ([agentic-rag-lu](https://github.com/BDelfanian/agentic-rag-lu)) already uses Cosmos DB

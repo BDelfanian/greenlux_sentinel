@@ -63,6 +63,7 @@ def transform(holdings: pd.DataFrame, esg: pd.DataFrame) -> list[dict[str, Any]]
     """Join holdings to company ESG ratings by ticker, one nested doc per ETF. Pure function."""
     esg_fields = list(_ESG_RAW_TO_INTERNAL.values())
     esg_indexed = esg.rename(columns=_ESG_RAW_TO_INTERNAL).assign(ticker=esg["ticker"].str.upper())
+    esg_indexed = esg_indexed.where(pd.notnull(esg_indexed), None)
     esg_by_ticker = esg_indexed.set_index("ticker")[esg_fields].to_dict(orient="index")
 
     holdings = holdings.rename(

@@ -1,0 +1,36 @@
+# Local dev only (Phase 2 — see docs/ROADMAP.md). Mirrors the two real Azure services
+# (Postgres Flexible Server + Cosmos DB NoSQL/Core API — CLAUDE.md decision #3) so agent code
+# written against config.py works unchanged against Azure later. Not used in Phase 5 deploy.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: greenlux-postgres
+    environment:
+      POSTGRES_DB: greenlux
+      POSTGRES_USER: greenlux
+      POSTGRES_PASSWORD: greenlux_dev_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/greenlux_sentinel/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./src/greenlux_sentinel/db/audit_log_schema.sql:/docker-entrypoint-initdb.d/02_audit_log_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U greenlux -d greenlux"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # NoSQL/Core API emulator — NOT Gremlin (CLAUDE.md decision #3). vnext-preview image: no
+  # cert/partition setup needed, talks plain HTTP on 8081, much lighter than the classic emulator.
+  cosmos:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+    container_name: greenlux-cosmos
+    ports:
+      - "8081:8081"
+    environment:
+      PROTOCOL: http
+
+volumes:
+  postgres_data:

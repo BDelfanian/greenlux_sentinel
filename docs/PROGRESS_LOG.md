@@ -10,6 +10,100 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 2 — Core agents
+
+**Completed:** 2026-08-06
+
+**Done:**
+- Installed Docker Desktop (via winget) — unblocked the Phase 0/1 "no Docker available"
+  assumption. `docker-compose.yml` runs Postgres 16 + the Cosmos DB NoSQL emulator
+  (`vnext-preview` image), schema auto-initialized from `db/schema.sql` +
+  `db/audit_log_schema.sql`.
+- Ran `load_funds_postgres.py` and `load_esg_cosmos.py` live for real (Phase 1's last open
+  item) — 67,098 funds into Postgres, 99 ETF docs into Cosmos. Found and fixed a real bug while
+  doing so: a missing `industry` cell in the ESG ratings CSV produced a Python float `NaN` that
+  `json.dumps` renders as the invalid JSON literal `NaN`, which Cosmos rejects outright
+  ("Failed to parse Json request") — fixed in `load_esg_cosmos.py`'s `transform()` with a
+  `pd.notnull` sweep before dict conversion; regression test added.
+- Provisioned a real Azure OpenAI resource (`greenlux-openai`, `rg-greenlux-sentinel`,
+  francecentral, on the user's "Azure for Students" subscription) via `az` CLI, with a
+  `gpt-5-mini` / `GlobalStandard` deployment (the originally-planned `gpt-4o-mini` is deprecated
+  and unavailable for new deployments as of this session's date).
+- **Discovered and fixed a foundational data-linkage gap** (see Deviations) — added
+  `etl/fetch_verified_holdings.py` and `etl/load_verified_holdings_cosmos.py`, five real UCITS
+  ETFs loaded live into Cosmos, unit-tested.
+- Implemented and live-verified all three Phase 2 agents plus the supervisor:
+  `agents/risk_agent.py`, `agents/sql_agent.py`, `agents/query_optimizer_agent.py`,
+  `agents/supervisor.py` (LangGraph `StateGraph`). Every one of them was exercised against the
+  real live Postgres/Cosmos/Azure OpenAI stack, not just unit tests with fakes.
+- Enabled LangSmith tracing end to end — signed up for a LangSmith account, wired the API key,
+  and discovered/fixed a second real gotcha: the account's workspace is EU-hosted, and the SDK
+  defaults to the US endpoint (`api.smith.langchain.com`), which 403s for an EU key. Added
+  `langchain_endpoint` to `config.py` (default `eu.api.smith.langchain.com`) and confirmed via
+  the LangSmith API that a real trace landed.
+- 80 unit tests passing (up from 19 at the end of Phase 1), ruff clean.
+
+**Deviations from the original plan:**
+- **The Tier 2 "Top 100 ETF holdings" Kaggle dataset cannot support the risk-score formula.**
+  Discovered that all 99 ETFs in it (VOO, SPY, VTI, sector SPDRs, Treasury/bond ETFs, etc.) are
+  plain US-listed index/bond trackers: zero overlap with Tier 1's Morningstar **European** funds
+  table (0/99 by ticker — different market entirely) and no sustainability claim of their own.
+  CLAUDE.md decision #2 had assumed Tier 2 was "a narrower set" of Tier 1; Phase 1's profiling
+  never actually checked that (it only checked Tier-2-internal overlap between holdings tickers
+  and ESG-ratings tickers), so the false assumption survived until risk_agent implementation
+  forced the question. Fixed by fetching real, current, issuer-published holdings (free,
+  no-auth CSV export from each fund's public iShares product page) for five UCITS ETFs that
+  *are* real Tier 1 rows, chosen for strong overlap with the US-centric ESG ratings dataset
+  (52-84% by weight, vs. ~14% for the original set). Full writeup, the five ISINs, and the
+  ratings/scores involved: [DATA.md](DATA.md#tier-2-verified-holdings-phase-2-correction). The
+  original Top 100 Kaggle set stays loaded as a separate, explicitly-unlinked descriptive
+  dataset, not used for scoring.
+- The Greenwashing Risk Score formula ended up more concrete than DATA.md's abstract
+  `f(claimed, holdings_implied)`: claimed rating (1-5 globes) rescales to a 0-100 "claimed
+  quality" scale; the raw ~600-1536 weighted company-ESG score rescales to 0-100 using the
+  *observed* min/max across the 722-company ESG ratings population (not a theoretical ceiling —
+  re-derive if that source dataset changes); the score is `max(0, claimed - holdings_implied)`,
+  clamped at 0 so a fund whose real holdings beat its claim isn't scored as "negative risk." See
+  `agents/risk_agent.py` module docstring.
+- `gpt-4o-mini` (the model named in earlier planning) is deprecated for new deployments as of
+  this session — used `gpt-5-mini` instead (real quota available, `GlobalStandard` SKU,
+  `francecentral`).
+- Query-optimizer's human-approval gate reuses `audit_log`'s existing `approval_status` columns
+  rather than a new table — RESPONSIBLE_AI.md already specified those columns for exactly this
+  purpose, and a dedicated table would have duplicated it for no benefit at this scale.
+- Supervisor only wires the three specialists actually implemented this phase (sql/risk/
+  query_optimizer). etl_agent/dashboard_agent/report_agent remain `NotImplementedError` stubs —
+  ARCHITECTURE.md's six-agent graph is the end state, not a Phase 2 deliverable.
+- **None of the five verified Tier 2 funds are Luxembourg-domiciled** (all five ISINs are `IE`-
+  prefixed, chosen because iShares publishes a trivially scriptable public holdings CSV). Tier 1
+  as a whole and the GLEIF LU grounding still carry the project's Luxembourg framing untouched,
+  but the risk-score demo itself doesn't showcase a real LU fund. Checked Amundi
+  (`LU1861136247`) and BNP Paribas (`LU1291103338`) — both are real LU-domiciled funds with the
+  same strategy already present in Tier 1, but neither exposes an iShares-style static CSV
+  export (Amundi's holdings load from a private API not in the static HTML; no CSV/XLSX link
+  found for BNP Paribas). Not fixed — would need a headless browser, a paid data provider, or
+  contacting the issuer directly. Full detail:
+  [DATA.md](DATA.md#tier-2-verified-holdings-phase-2-correction) (see "Known limitation").
+
+**Live local environment, ready for a fresh session to resume against:** Docker Desktop is
+installed and `docker-compose up -d` starts Postgres (`localhost:5432`) + the Cosmos emulator
+(`localhost:8081`) with data already loaded (67,098 Tier 1 funds, 99 Top-100 ETF docs, 5 verified
+Tier 2 docs, 19 `fund_risk_scores` rows). `.env` has live Azure OpenAI (`greenlux-openai`,
+`gpt-5-mini`) and LangSmith credentials already filled in — nothing needs re-provisioning to keep
+building. If the containers aren't running, `docker compose up -d` from the repo root brings them
+back (data persists in the `postgres_data` named volume; Cosmos emulator data does not persist
+across container recreation — re-run the two `etl.load_*` calls and `etl.load_verified_holdings_cosmos`
+if the Cosmos container was recreated).
+
+**Next step:** Phase 3 — MCP servers. Wrap the direct-SDK calls in `sql_agent.py` (Postgres),
+`risk_agent.py` (Postgres + Cosmos), and `query_optimizer_agent.py` (Postgres) behind
+`postgres_server`/`cosmos_server` MCP tools per ARCHITECTURE.md, without changing the validation/
+gate logic that already lives in the agents. `gleif_server` and `powerbi_server` still need their
+first real implementation (currently empty stubs). Optionally, revisit the LU-domicile limitation
+above if a real Luxembourg-fund holdings source turns up.
+
+---
+
 ## Phase 1 — Data profiling & ingestion
 
 **Completed:** 2026-08-06

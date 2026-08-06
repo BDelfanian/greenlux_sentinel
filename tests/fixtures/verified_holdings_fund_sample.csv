@@ -1,0 +1,8 @@
+Fund Holdings as of,"04/Aug/2026"
+
+Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Shares,Price,Location,Exchange,Market Currency
+"MSFT","MICROSOFT CORP","Information Technology","Equity","1’651’726.92","7.85","1’651’726.92","7’793.00","211.94","United States","NASDAQ","USD"
+"NVDA","NVIDIA CORP","Information Technology","Equity","847’212.04","5.00","847’212.04","3’997.00","211.94","United States","NASDAQ","USD"
+"ZZZZ","UNMATCHED COMPANY","Industrials","Equity","100’000.00","2.00","100’000.00","500.00","200.00","United States","NASDAQ","USD"
+,"FOREIGN NO TICKER CO","Financials","Equity","50’000.00","1.00","50’000.00","250.00","200.00","Canada","Toronto Stock Exchange","CAD"
+"USD CASH","USD CASH","Cash and/or Derivatives","Cash","20’000.00","0.15","20’000.00","20’000.00","1.00","United States","-","USD"

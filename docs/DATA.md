@@ -39,6 +39,58 @@ not possible at full scale. Rather than pretend otherwise:
   actually runs. Its results (per-ETF risk score) get written back into a Postgres table so the
   BI/report layer can reference them alongside the broader fund universe.
 
+## Tier 2 verified holdings (Phase 2 correction)
+
+**The original Tier 2 source cannot support the risk-score formula above.** Phase 2 discovered
+that "Full Holdings Data for the Top 100 ETFs" (the dataset in the Datasets table below) is a set
+of plain US-listed index/bond trackers (VOO, SPY, VTI, sector SPDRs, Treasury ETFs, etc.) — none
+carry a sustainability claim of their own, and **none exist in the Tier 1 Morningstar European
+funds table** (0/99 match by ticker, confirmed against live data — different market entirely).
+The two-tier design assumed Tier 2 was "a narrower set" of Tier 1 (CLAUDE.md decision #2); that
+assumption was never checked in Phase 1 (which only profiled *Tier-2-internal* ticker overlap —
+holdings vs. ESG ratings — not Tier1-vs-Tier2 fund identity) and turned out to be false. With no
+fund carrying both a claimed rating *and* real holdings, `risk_score()` was uncomputable for any
+fund in that dataset.
+
+**Fix:** `etl/fetch_verified_holdings.py` pulls real, current, issuer-published holdings (the same
+"Download Holdings" CSV export any visitor can get from the fund's public product page — no auth)
+for five UCITS ETFs that *are* real rows in Tier 1, chosen for being large-cap US/global equity
+funds so their holdings overlap well with the US-centric `public_company_esg_ratings.csv`:
+
+| ISIN | Fund | Tier 1 sustainability rating | Note |
+|---|---|---|---|
+| IE00BYVJRR92 | iShares MSCI USA SRI UCITS ETF | 5 globes / 20.00 | |
+| IE00BFNM3G45 | iShares MSCI USA ESG Screened UCITS ETF | 3 globes / 22.37 | |
+| IE00BDZZTM54 | iShares MSCI World SRI UCITS ETF | 5 globes / 19.85 | |
+| IE00BKVL7331 | iShares Edge MSCI USA Min Vol ESG UCITS ETF | 5 globes / 20.81 | |
+| IE00B5BMR087 | iShares Core S&P 500 UCITS ETF | 3 globes / 22.54 | No ESG claim — kept as a control, not part of the greenwashing comparison |
+
+Weighted ticker overlap against the ESG ratings dataset is 52-84% per fund (vs. ~14% for the
+original Top 100 set) — see `etl/load_verified_holdings_cosmos.py`. `risk_agent.py` (Phase 2)
+computes the real Greenwashing Risk Score only for these five (well, four — CSPX has no claim to
+compare against), by ISIN. The original Top 100 Kaggle set stays loaded (`load_esg_cosmos.py`) as
+a separate, clearly-unlinked *descriptive* holdings-ESG-aggregation dataset — useful for showing
+the pipeline technique, not used for the risk score. Re-running `fetch_verified_holdings.py`
+re-pulls the current day's holdings; this is not a point-in-time archive.
+
+**Known limitation — none of the five verified funds are Luxembourg-domiciled.** All five ISINs
+above start with `IE` (Ireland) — chosen because iShares/BlackRock happens to publish a trivially
+scriptable public "Download Holdings" CSV per fund, which is what made this fix tractable at all.
+This project's Luxembourg framing (CSSF anti-greenwashing priorities, ALFI/LSFI's sustainable-fund
+hub status — see "Why this topic" above) is carried by Tier 1 as a whole (58% of mutual funds /
+33% of ETFs are LU-domiciled) and by the GLEIF LU legal-entity grounding, both untouched by this
+fix — but the flagship risk-score *demo* specifically doesn't showcase a real Luxembourg fund.
+
+Real LU-domiciled equivalents do exist in Tier 1 with the same strategy profile — e.g.
+`LU1861136247` (Amundi Index MSCI USA SRI UCITS ETF DR) and `LU1291103338` (BNP Paribas Easy MSCI
+USA SRI UCITS ETF) both showed up in the same 690-fund ESG/SRI search that produced the five above.
+Neither Amundi's nor BNP Paribas's public fund pages were found to expose an iShares-style static
+CSV export (checked via direct page fetch — Amundi's holdings data appears to load from a private
+API not present in the static HTML; no CSV/XLSX link surfaced for BNP Paribas either). Pulling a
+real LU-domiciled fund into the verified set would need either a headless browser against one of
+those sites, a paid data provider, or contacting the issuer directly — none attempted, given
+Phase 2's time budget. Left as a candidate follow-up, not blocking Phase 3.
+
 ## Datasets
 
 | Dataset | Source | Size | Format | Role |

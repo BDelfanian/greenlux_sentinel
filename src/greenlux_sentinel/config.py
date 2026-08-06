@@ -9,6 +9,7 @@ plain env vars / .env file.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -41,10 +42,14 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
     azure_openai_deployment: str = ""
+    azure_openai_api_version: str = "2024-10-21"
 
     langchain_tracing_v2: bool = False
     langchain_api_key: str = ""
     langchain_project: str = "greenlux-sentinel"
+    # This project's LangSmith workspace is EU-hosted -- the SDK defaults to the US endpoint,
+    # which 403s for an EU API key. Must be set explicitly.
+    langchain_endpoint: str = "https://eu.api.smith.langchain.com"
 
     powerbi_tenant_id: str = ""
     powerbi_client_id: str = ""
@@ -80,9 +85,22 @@ def _apply_key_vault_overrides(settings: Settings) -> Settings:
     return settings.model_copy(update=overrides)
 
 
+def _propagate_langsmith_env(settings: Settings) -> None:
+    """LangChain/LangGraph's tracing instrumentation reads LANGCHAIN_* from os.environ directly
+    at call time — it does not know about our pydantic Settings object. Push them through once
+    so any agent that just calls an LLM gets tracing "for free" without importing langsmith."""
+    if not settings.langchain_tracing_v2:
+        return
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
+    os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project
+    os.environ["LANGCHAIN_ENDPOINT"] = settings.langchain_endpoint
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     settings = Settings()
     if settings.azure_key_vault_url:
         settings = _apply_key_vault_overrides(settings)
+    _propagate_langsmith_env(settings)
     return settings
