@@ -84,6 +84,14 @@ only, vs. `uniluxembourg.onmicrosoft.com` / "Azure for Students" (subscription
 existing `.env`/Key Vault pattern this doesn't need any code change to accommodate, but worth
 knowing if `az login` ever needs to target the right tenant for a given resource.
 
+**Confidential runbook added, not pushed to GitHub:** `docs/private/power-bi-account-setup.md`
+(gitignored via a new `docs/private/` rule in `.gitignore`) has the full account-creation
+tutorial for the Power BI dev tenant — all the resource/tenant/app IDs from this entry plus the
+two undocumented gotchas encountered (personal-account sign-in block, service-principal object-ID
+vs. app-ID when adding it to a workspace) and a from-scratch rebuild checklist. Deliberately
+excludes the client secret and `pbiadmin` password (those stay in `.env`/password manager only).
+Read it first if Power BI access ever needs to be reconstructed or extended.
+
 **Next step:** Phase 5 — Azure deployment (Bicep IaC, CI/CD, Key Vault, Azure Monitor) per
 docs/ROADMAP.md. `etl_agent.py` is still an unimplemented stub (GLEIF MCP server has been
 live-verified since Phase 3 but has no caller yet) — worth picking up alongside or before Phase 5.

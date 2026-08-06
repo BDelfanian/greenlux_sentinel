@@ -10,6 +10,7 @@ dist/
 # Environment / secrets
 .env
 *.env.local
+docs/private/
 
 # Data (raw/processed datasets are downloaded, not committed)
 data/raw/*
