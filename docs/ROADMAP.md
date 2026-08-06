@@ -69,9 +69,16 @@ correction note for the full story.
 
 ## Phase 3 — MCP servers
 
-- [ ] `postgres_server`, `cosmos_server` implemented and swapped in for direct SDK calls
-- [ ] `gleif_server` — live API integration
-- [ ] `powerbi_server` — stubbed against a dev Power BI workspace
+- [x] `postgres_server`, `cosmos_server` implemented and swapped in for direct SDK calls —
+      sql_agent.ask(), risk_agent's Cosmos lookup, and query_optimizer_agent's explain/propose
+      paths now call through these modules; live-verified end to end against the local stack
+      (see docs/PROGRESS_LOG.md)
+- [x] `gleif_server` — live API integration, verified live against api.gleif.org (lookup_lei,
+      search_lu_entities); not yet called by any agent (etl_agent is still a stub)
+- [x] `powerbi_server` — implemented against the real Power BI REST API surface
+      (service-principal auth via azure-identity), request shaping unit-tested via
+      httpx.MockTransport; **not** live-verified — no Power BI workspace/service principal is
+      provisioned yet (that happens in Phase 4)
 
 ## Phase 4 — BI + reporting
 

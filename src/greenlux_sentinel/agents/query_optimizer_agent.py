@@ -17,6 +17,13 @@ HUMAN-IN-THE-LOOP GATE (docs/RESPONSIBLE_AI.md#human-in-the-loop-gates):
 
 Both the proposal and the approval/rejection decision are audit-logged as separate rows, per
 RESPONSIBLE_AI.md's "outcomes are themselves audit-logged."
+
+Phase 3: explain_query()'s EXPLAIN ANALYZE and propose_index()'s pending-row insert now run
+through `mcp_servers.postgres_server` (per ARCHITECTURE.md's postgres_server tool surface).
+_existing_indexed_columns()'s pg_indexes introspection, _fetch_pending_proposal(), and
+apply_approved()'s DDL execution stay direct psycopg calls -- they're this agent's own internal
+bookkeeping (catalog introspection, the human-gate's state machine, the one deliberately
+non-tool-surfaced DDL apply step), not part of the documented MCP tool surface.
 """
 
 from __future__ import annotations
@@ -25,7 +32,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from greenlux_sentinel.agents.sql_agent import validate as validate_select
-from greenlux_sentinel.db.audit import write_audit_log
+from greenlux_sentinel.mcp_servers import postgres_server
 
 if TYPE_CHECKING:
     import psycopg
@@ -39,11 +46,7 @@ _FROM_TABLE = re.compile(r"\bFROM\s+(\w+)", re.IGNORECASE)
 def explain_query(sql: str, conn: psycopg.Connection) -> str:
     """Run EXPLAIN ANALYZE on a read-only query and return the plan text."""
     validate_select(sql)
-    with conn.cursor() as cur:
-        cur.execute(f"EXPLAIN ANALYZE {sql}")
-        plan_lines = [row[0] for row in cur.fetchall()]
-    conn.rollback()
-    return "\n".join(plan_lines)
+    return postgres_server.explain_query(sql, conn=conn)
 
 
 def _existing_indexed_columns(table: str, conn: psycopg.Connection) -> set[str]:
@@ -109,20 +112,12 @@ def propose_index(slow_query_sql: str, conn: psycopg.Connection | None = None) -
             f"on with no covering index — proposing one defensively."
         )
 
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO audit_log "
-                "(agent_name, tool_name, input_summary, output_summary, required_approval, approval_status) "
-                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                ("query_optimizer_agent", "propose_index", slow_query_sql, ddl, True, "pending"),
-            )
-            proposal_id = cur.fetchone()[0]
-        conn.commit()
+        proposal_id = postgres_server.propose_index(ddl, slow_query_sql, conn=conn)
     finally:
         if owns_conn:
             conn.close()
 
-    return {"proposal_id": str(proposal_id), "ddl": ddl, "estimated_improvement": estimated_improvement}
+    return {"proposal_id": proposal_id, "ddl": ddl, "estimated_improvement": estimated_improvement}
 
 
 def _fetch_pending_proposal(proposal_id: str, conn: psycopg.Connection) -> tuple[str, str] | None:
@@ -194,9 +189,10 @@ def apply_approved(proposal_id: str, approved_by: str, conn: psycopg.Connection 
                 "WHERE id = %s",
                 (approved_by, int(proposal_id)),
             )
-            cur.execute(ddl)
-        write_audit_log(
-            conn,
+            cur.execute(ddl)  # deliberately direct -- see module docstring on why apply_approved()
+            # is the one place DDL execution stays off the MCP tool surface
+        postgres_server.write_audit_log(
+            conn=conn,
             agent_name="query_optimizer_agent",
             tool_name="apply_approved",
             input_summary=f"proposal_id={proposal_id}",

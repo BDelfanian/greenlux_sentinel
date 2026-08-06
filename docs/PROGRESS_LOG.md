@@ -10,6 +10,94 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 3 — MCP servers
+
+**Completed:** 2026-08-06
+
+**Done:**
+- Implemented all four MCP servers for real, using the `mcp` Python SDK's `FastMCP` scaffolding
+  (`mcp_servers/postgres_server.py`, `cosmos_server.py`, `gleif_server.py`, `powerbi_server.py`).
+  Each follows the same two-layer shape: a plain, conn/container-injectable function that
+  agents import and call in-process (keeps existing agent unit tests working unchanged against
+  MagicMock connections, and lets a shared transaction span multiple calls — e.g.
+  sql_agent.ask() reads then audit-logs then commits once), plus an `@mcp.tool()`-decorated
+  wrapper with a JSON-only signature for when the module runs standalone via `serve()` (opens
+  its own connection per call, since MCP tool arguments can't carry a live Connection/
+  ContainerProxy object).
+- Swapped the direct-SDK calls that map onto ARCHITECTURE.md's documented tool surface
+  (`run_readonly_query`, `explain_query`, `propose_index`, `write_audit_log` for Postgres;
+  `get_company_esg`, `query_esg_documents` for Cosmos) out of `sql_agent.py`, `risk_agent.py`,
+  and `query_optimizer_agent.py` and into the new MCP server modules — validation/gate logic
+  (SELECT-only regex, forbidden-keyword check, the `pending`-status re-check before DDL apply)
+  stays exactly where it was, in the agents, per the brief.
+- `gleif_server.py` live-verified against the real `api.gleif.org` (no key needed) — confirmed
+  the actual response shape (`{"data": {...}}` for a single LEI lookup, `{"data": [...]}` for a
+  filtered search; `attributes.entity.{legalName.name, legalForm.id, status,
+  legalAddress.country}`) via `curl`, then again through `lookup_lei("Amundi")` and
+  `search_lu_entities("FUND")`. Not yet called by any agent — `etl_agent.py` (its intended
+  consumer) is still an unimplemented stub.
+- `powerbi_server.py` implemented against the real Power BI REST API
+  (`executeQueries`/`refreshes`, service-principal auth via `azure-identity`'s
+  `ClientSecretCredential` — no new dependency needed) but **not** live-verified: no Power BI
+  workspace or service principal is provisioned yet (that's Phase 4). Request shaping is
+  unit-tested via `httpx.MockTransport`.
+- Live end-to-end verification against the local Docker stack (Postgres + Cosmos emulator,
+  which had been stopped since the last session): `sql_agent.ask()`, `risk_agent.
+  score_all_verified()` (all 19 rows, same scores as Phase 2 — e.g. 0P00018CYB still 53.03),
+  and `query_optimizer_agent.propose_index()` + `apply_approved()` (a real `CREATE INDEX
+  idx_funds_management_company` landed in Postgres) all still work end to end through the new
+  MCP-server wiring, with audit_log rows written via `postgres_server.write_audit_log`.
+- 20 new unit tests (`test_postgres_server.py`, `test_cosmos_server.py`, `test_gleif_server.py`,
+  `test_powerbi_server.py`) plus zero changes needed to the existing Phase 2 agent tests — the
+  refactor was designed so the same MagicMock conn/container objects flow through unchanged.
+  100 tests passing total (up from 80), ruff clean.
+
+**Deviations from the original plan:**
+- **Not every direct-SDK call moved behind an MCP tool** — only the ones that map onto
+  ARCHITECTURE.md's documented tool list did. Left as direct psycopg calls, deliberately:
+  `risk_agent.persist()`'s `fund_risk_scores` INSERT (this agent's own output write; no generic
+  "write" MCP tool exists by design — inventing one would be exactly the "arbitrary write
+  exposed as a tool" anti-pattern ARCHITECTURE.md warns against), `risk_agent`'s
+  `fund_id`→isin and isin→claims lookups (hardcoded, non-analyst-facing reads specific to this
+  agent's own workflow, not the dynamic LLM-generated SQL `run_readonly_query` exists for),
+  `query_optimizer_agent._existing_indexed_columns()` (pg_indexes catalog introspection), and
+  `_fetch_pending_proposal()`/`reject_proposal()`/`apply_approved()`'s DDL execution (the
+  human-gate's own state machine — deliberately kept off the LLM-reachable tool surface, same
+  reasoning Phase 2 already applied to keeping DDL-apply out of any tool). If this needs
+  revisiting, `postgres_server.py`'s module docstring and the per-function docstrings in
+  `risk_agent.py`/`query_optimizer_agent.py` explain the reasoning inline.
+- **The local Cosmos DB emulator has no committed database/container provisioning step
+  anywhere in the repo.** Phase 2's "data already loaded" note assumed the container survives a
+  `docker compose up -d` restart; in practice the vnext-preview emulator's storage is ephemeral
+  across a container stop/start (not just a full recreation), so this session's first Cosmos
+  query failed with a generic `PostgresError` from the emulator's own Postgres-backed engine
+  (not a clean 404 — worth knowing if this comes up again) until the database/container were
+  (re)created ad hoc via `create_database_if_not_exists`/`create_container_if_not_exists` and
+  the two `etl.load_*_cosmos` loaders re-run. Not fixed as a committed script this session
+  (out of Phase 3's scope) — worth a small `etl/setup_cosmos.py` in a future session if this
+  friction recurs.
+- `gleif_server`'s `search_lu_entities` filters on GLEIF's `entity.category` field (e.g.
+  `'FUND'`) rather than `entity.legalForm.id` — the latter is an opaque ELF code (e.g. `'8888'`
+  for a Luxembourg sub-fund), not a human-readable entity-type string, so `category` is the
+  more usable filter for this tool's signature. Confirmed live that `filter[entity.category]`
+  is a supported GLEIF query parameter.
+
+**Live local environment:** same as Phase 2's note, plus: this session's Docker Desktop restart
+required manually recreating the Cosmos database/container (see deviation above) before the
+`etl.load_esg_cosmos`/`etl.load_verified_holdings_cosmos` reload would work — a fresh session
+should expect to need the same two steps if the Cosmos container was stopped since the data was
+last loaded, not only on a full `docker compose down -v`.
+
+**Next step:** Phase 4 — BI + reporting. Provision a real dev Power BI workspace/dataset and
+service principal (unblocks live-verifying `powerbi_server.py` for the first time) and start on
+the Dashboard Agent (NL question → DAX query, via `powerbi_server.run_dax_query`) and the Report
+Agent (multilingual EN/FR/DE draft generation + citation trail, gated on human approval per
+RESPONSIBLE_AI.md — this is the second and last human-in-the-loop gate the project needs).
+Wire whichever of these lands first into `supervisor.py`'s graph alongside the three Phase 2
+specialists.
+
+---
+
 ## Phase 2 — Core agents
 
 **Completed:** 2026-08-06

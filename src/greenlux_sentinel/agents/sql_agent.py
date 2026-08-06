@@ -8,9 +8,9 @@ Responsibility (docs/ARCHITECTURE.md#agent-graph-langgraph):
 Read-only — no human-in-the-loop gate. Must never execute DDL/DML; enforced two ways: (1) the
 generated text is validated to be a single SELECT statement with no forbidden keywords before
 it ever reaches the database, and (2) the connection itself is put into Postgres's native
-read-only transaction mode for the query, so even a validation bypass can't write. From Phase 3
-onward this becomes the postgres_server MCP tool's `run_readonly_query`, per ARCHITECTURE.md —
-this direct-SDK version is the Phase 2 baseline it will wrap.
+read-only transaction mode for the query, so even a validation bypass can't write. The actual
+execution and audit-log write go through `mcp_servers.postgres_server`'s `run_readonly_query`/
+`write_audit_log` (Phase 3, per ARCHITECTURE.md) — validation itself stays here, unchanged.
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def generate_sql(question: str, llm: BaseChatModel | None = None) -> str:
 
 def ask(question: str, conn: psycopg.Connection | None = None, llm: BaseChatModel | None = None) -> dict[str, Any]:
     """Return {"sql": str, "rows": list[dict]}."""
-    from greenlux_sentinel.db.audit import write_audit_log
+    from greenlux_sentinel.mcp_servers import postgres_server
 
     sql = generate_sql(question, llm=llm)
     limited_sql = _with_row_limit(sql)
@@ -146,16 +146,10 @@ def ask(question: str, conn: psycopg.Connection | None = None, llm: BaseChatMode
         conn = psycopg.connect(get_settings().postgres_dsn)
 
     try:
-        conn.read_only = True
-        with conn.cursor() as cur:
-            cur.execute(limited_sql)
-            columns = [desc.name for desc in cur.description] if cur.description else []
-            rows = [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
-        conn.rollback()  # close out the read-only transaction cleanly
+        rows = postgres_server.run_readonly_query(limited_sql, conn=conn)
 
-        conn.read_only = False
-        write_audit_log(
-            conn,
+        postgres_server.write_audit_log(
+            conn=conn,
             agent_name="sql_agent",
             tool_name="ask",
             input_summary=question,

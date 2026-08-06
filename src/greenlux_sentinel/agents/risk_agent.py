@@ -17,6 +17,13 @@ in Tier 1 and can't feed this formula (see that module, load_esg_cosmos.py). One
 from scoring — see score_all_verified().
 
 Read-only except for writing its own output table (fund_risk_scores) — no human-in-the-loop gate.
+
+Phase 3: the Cosmos lookup (_fetch_verified_doc) and the audit-log write (persist) now go
+through `mcp_servers.cosmos_server`/`mcp_servers.postgres_server` respectively, per
+ARCHITECTURE.md's documented tool surface. The isin/claims Postgres reads (_fetch_claims, the
+fund_id->isin lookup in score_fund) and the fund_risk_scores INSERT stay direct psycopg calls —
+they're this agent's own hardcoded, non-analyst-facing reads/writes, not the dynamic
+LLM-generated SQL that run_readonly_query is for (see mcp_servers/postgres_server.py).
 """
 
 from __future__ import annotations
@@ -93,14 +100,10 @@ def explain(holdings: list[dict[str, Any]], top_n: int = 5) -> str:
 
 
 def _fetch_verified_doc(isin: str, container: ContainerProxy) -> dict[str, Any] | None:
-    items = list(
-        container.query_items(
-            query="SELECT * FROM c WHERE c.isin = @isin AND c.source = 'issuer_verified'",
-            parameters=[{"name": "@isin", "value": isin}],
-            enable_cross_partition_query=True,
-        )
-    )
-    return items[0] if items else None
+    from greenlux_sentinel.mcp_servers import cosmos_server
+
+    docs = cosmos_server.query_esg_documents({"isin": isin, "source": "issuer_verified"}, container=container)
+    return docs[0] if docs else None
 
 
 def _fetch_claims(isin: str, conn: psycopg.Connection) -> list[tuple[str, float]]:
@@ -142,8 +145,16 @@ def score_by_isin(isin: str, conn: psycopg.Connection, container: ContainerProxy
 
 
 def persist(results: list[dict[str, Any]], conn: psycopg.Connection) -> None:
-    """Write results to fund_risk_scores and audit-log the write. Caller controls commit."""
-    from greenlux_sentinel.db.audit import write_audit_log
+    """Write results to fund_risk_scores and audit-log the write. Caller controls commit.
+
+    The fund_risk_scores INSERT stays a direct psycopg call -- it's this agent's own output
+    write, not part of postgres_server's documented tool surface (run_readonly_query/
+    explain_query/propose_index/write_audit_log), and there's no generic "write" MCP tool by
+    design (see mcp_servers/postgres_server.py's docstring on why apply_approved()'s DDL stays
+    off the tool surface too). The audit-log write does go through the MCP tool below, since
+    write_audit_log is one of the four documented tools.
+    """
+    from greenlux_sentinel.mcp_servers import postgres_server
 
     with conn.cursor() as cur:
         for r in results:
@@ -152,8 +163,8 @@ def persist(results: list[dict[str, Any]], conn: psycopg.Connection) -> None:
                 "VALUES (%s, %s, %s, %s)",
                 (r["fund_id"], r["risk_score"], r["holdings_implied_esg"], r["explanation"]),
             )
-    write_audit_log(
-        conn,
+    postgres_server.write_audit_log(
+        conn=conn,
         agent_name="risk_agent",
         tool_name="score_by_isin",
         input_summary=f"isin={results[0]['isin']}" if results else "",
