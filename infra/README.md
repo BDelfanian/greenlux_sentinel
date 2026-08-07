@@ -192,16 +192,54 @@ $key = az storage account keys list --account-name <landing-storage-account> --r
 az storage blob upload-batch --account-name <landing-storage-account> --account-key $key --destination landing --source data/raw --pattern "*.csv"
 ```
 
+## Deploy-on-merge CI (`.github/workflows/deploy.yml`)
+
+App-level deploys only — builds+pushes the agent API image, updates the Container App, then
+builds+deploys the ETL Function App package. Triggers on push to `main` touching `src/**`,
+`Dockerfile`, `function_app.py`, `requirements.txt`, `host.json`, or the workflow file itself
+(also runnable on demand via `workflow_dispatch`). **Does not touch `infra/*.bicep`** — see below
+for why, and keep running infra changes manually per this README's earlier sections.
+
+- **Auth**: OIDC via a **user-assigned managed identity**
+  (`id-greenlux-github-deploy`, in `rg-greenlux-sentinel`), not an Entra app registration — this
+  tenant restricts app registration to admins (same restriction hit provisioning Power BI in
+  Phase 4; `az ad app create` fails with `Insufficient privileges` regardless of which
+  subscription is active, since app registration is a directory-wide operation, not
+  subscription-scoped). A user-assigned managed identity is a plain RBAC-governed Azure resource
+  instead, and is Microsoft's current recommended approach for GitHub Actions OIDC anyway — not
+  merely a workaround. Federated credential subject:
+  `repo:BDelfanian/greenlux_sentinel:environment:deploy` (scoped to the `deploy` GitHub
+  Environment specifically, not just the branch).
+- **Permissions, deliberately narrow — RBAC scoped to the exact resources touched, not the whole
+  resource group**: `Contributor` on `ca-greenlux-agents-dev` and
+  `func-greenlux-etl-dev-idckowude2cgc` individually (not the whole resource group), plus
+  `AcrPush` (data-plane) on the registry. **No `Microsoft.Authorization/roleAssignments/write`
+  (i.e. no `User Access Administrator`) and no Key Vault access** — which is exactly why infra
+  changes stay manual: `infra/modules/container-apps.bicep`/`functions.bicep` create RBAC role
+  assignments, and a full `az deployment group create` also needs
+  `postgresAdministratorPassword`/`apiAuthToken` from Key Vault. Granting either would have been a
+  materially bigger permission footprint than "deploy the app," so the scope was deliberately
+  split — see docs/PROGRESS_LOG.md for the full reasoning.
+- **Approval gate**: the `deploy` GitHub Environment requires manual review
+  (Settings → Environments → deploy) before the job runs — a merge to `main` does not deploy
+  unattended. `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID` are plain repo
+  variables (`gh variable list`), not secrets — with no client secret in the federated-credential
+  model, they don't grant access on their own.
+- **A real gotcha worth knowing if you touch the GitHub Environment config**: creating it with
+  `deployment_branch_policy.protected_branches: true` silently blocks *every* deployment if `main`
+  itself isn't a GitHub-protected branch (it isn't, here) — no branch qualifies, so nothing can
+  ever deploy, with no obvious error at trigger time. Left `deployment_branch_policy` unset
+  instead; the workflow's own `on.push.branches: [main]` already restricts what can trigger it.
+
 ## Known gaps
 
 - **APIM's OpenAPI import happens at *deploy* time** against whatever the Container App is
   serving then — a stale/unreachable Container App at deploy time means a stale/empty API
   definition. No policies (rate limiting, subscription keys) are configured.
-- No deploy-on-merge GitHub Actions job (deliberate scope choice, pending the user's explicit
-  sign-off on granting Azure deploy credentials to CI).
-- The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription —
-  cleanup left to the user (destructive action on a resource that predates this session, and
-  Claude Code's permission classifier blocks the deletion call itself regardless).
+- **Infra changes (`infra/*.bicep`) still require a manual `az deployment group create`** — see
+  "Deploy-on-merge CI" above for why that's a deliberate scope decision, not an oversight.
+- The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription has
+  been deleted (confirmed via `az cognitiveservices account show` returning `ResourceNotFound`).
 
 ## Deploying from scratch
 

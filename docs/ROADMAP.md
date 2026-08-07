@@ -161,16 +161,23 @@ correction note for the full story.
       `LANDING_STORAGE_ACCOUNT_NAME` env var anywhere it was set, and an incomplete guessed
       dependency list for `mcp`'s `--no-deps` install) — see docs/PROGRESS_LOG.md.
 
+- [x] Cleanup: the now-redundant `greenlux-openai` resource in the old `Azure for Students`
+      subscription — deletion was blocked when attempted via Claude Code (its permission
+      classifier requires direct tool-level approval for destructive Azure operations); the user
+      ran `az cognitiveservices account delete` themselves and confirmed via
+      `az cognitiveservices account show` returning `ResourceNotFound`.
+
+- [x] Deploy-on-merge CI (`.github/workflows/deploy.yml`) — app-level deploys only (agent API
+      image + Container App, ETL Function App package), deliberately excluding `infra/*.bicep`
+      changes (that would need `User Access Administrator` + Key Vault read, a materially bigger
+      grant than what was agreed — see docs/PROGRESS_LOG.md). OIDC via a user-assigned managed
+      identity (Entra app registration is blocked for this tenant's accounts — same restriction
+      hit in Phase 4's Power BI provisioning), RBAC scoped to the exact two compute resources +
+      `AcrPush` on the registry, gated by a GitHub Environment requiring manual approval before
+      the job runs.
+
 **Phase 5 is now fully closed** — every item above is live-verified against the real deployed
-environment, not just written or deployed without crashing. Two things remain outside this
-session's scope, both explicitly handed to the user rather than assumed done:
-- No deploy-on-merge GitHub Actions job (deliberately deferred — needs the user's explicit
-  go-ahead on granting Azure deploy credentials to CI, a real trust-boundary decision proposed
-  but not yet actioned).
-- The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription —
-  deletion attempted, blocked by Claude Code's own permission classifier (destructive Azure
-  operations need direct tool-level approval); the exact command was handed to the user to run
-  themselves, not yet confirmed done.
+environment, not just written or deployed without crashing.
 
 ## Phase 6 — Polish for portfolio presentation
 

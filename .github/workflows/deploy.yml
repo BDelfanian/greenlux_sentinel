@@ -1,0 +1,89 @@
+name: Deploy
+
+# App-level deploys only (Phase 5, docs/PROGRESS_LOG.md) -- builds+pushes the agent API image and
+# redeploys the Container App, then builds+deploys the ETL Function App package. Deliberately
+# does NOT touch infra/*.bicep: a full infra redeploy needs permissions well beyond what this
+# workflow's identity has (Microsoft.Authorization/roleAssignments/write to (re)create the RBAC
+# grants infra/modules/*.bicep declares, plus Key Vault read for postgresAdministratorPassword/
+# apiAuthToken) -- a deliberate scope decision, not an oversight. Infra changes stay a manual
+# `az deployment group create`, run by a human — see infra/README.md.
+#
+# Auth is OIDC via a user-assigned managed identity (id-greenlux-github-deploy, created directly
+# as an Azure resource rather than an Entra app registration -- this tenant restricts app
+# registration to admins, same restriction hit provisioning Power BI in Phase 4). No client
+# secret exists anywhere; AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID below are plain repo
+# variables, not secrets, since without a secret they don't grant access on their own.
+#
+# The `deploy` GitHub Environment requires manual approval before this job runs (repo Settings ->
+# Environments -> deploy) -- a merge to main does not deploy unattended.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - "function_app.py"
+      - "requirements.txt"
+      - "host.json"
+      - "scripts/build_function_package.py"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push agent API image
+        run: |
+          az acr login --name greenluxacrdevidckowude2cgc
+          docker build -t greenluxacrdevidckowude2cgc.azurecr.io/greenlux-agents:${{ github.sha }} .
+          docker push greenluxacrdevidckowude2cgc.azurecr.io/greenlux-agents:${{ github.sha }}
+
+      - name: Update Container App
+        run: |
+          az containerapp update \
+            --name ca-greenlux-agents-dev \
+            --resource-group rg-greenlux-sentinel \
+            --image greenluxacrdevidckowude2cgc.azurecr.io/greenlux-agents:${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Function App package
+        run: python scripts/build_function_package.py
+
+      - name: Deploy Function App package
+        run: |
+          az functionapp deployment source config-zip \
+            --name func-greenlux-etl-dev-idckowude2cgc \
+            --resource-group rg-greenlux-sentinel \
+            --src build/function-deploy.zip
+
+      - name: Verify agent API health
+        run: |
+          for i in $(seq 1 10); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" https://ca-greenlux-agents-dev.politedesert-1edcbb25.francecentral.azurecontainerapps.io/healthz || true)
+            [ "$status" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "Agent API did not report healthy after deploy" >&2
+          exit 1

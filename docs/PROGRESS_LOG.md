@@ -10,6 +10,90 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 5 (continued) — deploy-on-merge CI, Phase 5 truly complete
+
+**Completed:** 2026-08-07
+
+**Done:** Built the deploy-on-merge GitHub Actions job that the previous entries left
+deliberately deferred, after the user reviewed and agreed to the proposed design up front.
+
+- **Scope clarified before touching anything**: implementing the originally-proposed design (full
+  infra + app deploy under one "Contributor on the resource group" grant) surfaced that
+  `Contributor` cannot create role assignments (`infra/modules/container-apps.bicep`/
+  `functions.bicep` both do) and that a real infra redeploy needs
+  `postgresAdministratorPassword`/`apiAuthToken` from Key Vault — both meaningfully bigger grants
+  than "Contributor only." Flagged this to the user rather than quietly expanding scope; they
+  chose **app-level deploys only** (agent API image + Container App, ETL Function App package),
+  leaving `infra/*.bicep` changes manual, same as today.
+- **Entra app registration blocked**: `az ad app create` failed with `Insufficient privileges`
+  under the university account (`0241545328@uni.lu`) — a directory-wide restriction on this
+  Entra tenant, not a subscription issue (confirmed: this is the same restriction that blocked
+  Power BI app registration in Phase 4, and it applies regardless of which subscription is
+  active, since app registration is tenant-scoped). Pivoted to a **user-assigned managed
+  identity** (`id-greenlux-github-deploy` in `rg-greenlux-sentinel`) instead — a plain
+  RBAC-governed Azure resource, not an Entra directory object, so no special directory
+  permission is needed to create it. This is Microsoft's current recommended approach for GitHub
+  Actions OIDC generally, not just a workaround for this tenant's restriction.
+- **RBAC scoped as narrowly as the tooling allowed**: `Contributor` on the Container App and
+  Function App *individually* (not resource-group-wide), plus `AcrPush` (data-plane) on the
+  registry. `az role assignment create` hit the same unexplained `(MissingSubscription)` CLI bug
+  from earlier in this phase (tried `--assignee-object-id`/`--assignee-principal-type` too, same
+  failure) — worked around it the same way as before, with a small standalone Bicep template
+  (`az deployment group create` against three `roleAssignments` resources) rather than fighting
+  the CLI further.
+- **Federated credential** on the managed identity, subject
+  `repo:BDelfanian/greenlux_sentinel:environment:deploy` — scoped to the GitHub Environment
+  specifically (not just the branch), so the approval gate and the OIDC trust are tied together.
+- **GitHub Environment `deploy`** created via `gh api` (had to install `gh` CLI first — not
+  present in this session's environment; `winget install GitHub.cli`, then device-code auth since
+  no interactive browser is available here) with a required-reviewer protection rule (the user).
+  **A real gotcha caught before it caused a silent failure**: the first attempt also set
+  `deployment_branch_policy.protected_branches: true`, which — since `main` isn't actually a
+  GitHub-protected branch on this repo — would have meant *no* branch qualified to deploy,
+  silently blocking every run with no obvious error. Checked `main`'s protection status first,
+  found it `false`, removed the branch-policy restriction entirely (the workflow's own
+  `on.push.branches: [main]` already does that job).
+- **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID`** set as plain GitHub repo
+  *variables* (`gh variable set`), not secrets — correct for the OIDC/federated-credential model,
+  where there's no client secret for these identifiers to protect.
+- **`.github/workflows/deploy.yml`** (new): triggers on push to `main` touching `src/**`,
+  `Dockerfile`, `function_app.py`, `requirements.txt`, `host.json`, or the workflow file itself
+  (plus `workflow_dispatch` for on-demand runs); `azure/login@v2` via OIDC; builds+pushes the
+  agent API image tagged with the commit SHA (not `:latest` — traceable, immutable), updates the
+  Container App, runs `scripts/build_function_package.py` and zip-deploys the result, then polls
+  `/healthz` to confirm the Container App actually came back up before declaring success.
+
+**Deviations from the original plan:** The scope narrowing (app-level only, not full infra+app)
+was a live finding surfaced during implementation, resolved with the user before proceeding — see
+above. Everything else matched the agreed design.
+
+**Next step:** Phase 5 has nothing outstanding. The `deploy` workflow itself is new and hasn't
+had a real push-triggered run yet — worth watching the first real trigger (or a manual
+`workflow_dispatch` run) through to a human approval and a successful deploy before fully trusting
+it unattended. Phase 6 (portfolio polish) is fully unblocked.
+
+---
+
+## Phase 5 (continued) — cleanup confirmed, committed and pushed
+
+**Completed:** 2026-08-07
+
+**Done:** Committed and pushed all of this phase's work to `main`
+(`0b15be5`, 36 files, `a545c84..0b15be5`) — Bicep IaC, the agent API, the ETL Function App, and
+the `data_dir` fix, all as one commit since it's one coherent chunk of live-verified work. The
+one item left open at the end of the previous entry is now confirmed closed too: the user ran
+`az cognitiveservices account delete --name greenlux-openai --resource-group rg-greenlux-sentinel
+--subscription 2fb7edf5-4f7b-4d24-a811-0ba717c89826` themselves (the deletion Claude Code's own
+permission classifier blocked) and confirmed via `az cognitiveservices account show` returning
+`ResourceNotFound`.
+
+**Next step:** Phase 5 has nothing outstanding except the deliberately-deferred deploy-on-merge
+CI job (needs the user's explicit go-ahead on granting Azure deploy credentials — proposed
+design: OIDC federated credential, `rg-greenlux-sentinel`-scoped Contributor, manual-approval
+GitHub Environment gate). Otherwise, Phase 6 (portfolio polish) is fully unblocked.
+
+---
+
 ## Phase 5 (continued) — data_dir fix, live-verified end to end; Phase 5 fully closed
 
 **Completed:** 2026-08-07
