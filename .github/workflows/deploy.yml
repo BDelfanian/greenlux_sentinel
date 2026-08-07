@@ -85,28 +85,18 @@ jobs:
 
       - name: Deploy Function App package
         run: |
-          # Root cause of the 409s hit setting this up (live-verified in Phase 5): az CLI's
-          # config-zip has two code paths for a Run-From-Package Linux Function App -- a fast
-          # direct-to-storage upload (needs data-plane access to the app's deployment storage
-          # account) and a fallback through Kudu's legacy /api/zipdeploy endpoint, which the CLI
-          # silently drops to when the caller lacks storage access. This identity only had
-          # Contributor on the compute resources, not the storage account, so every CI deploy hit
-          # the fallback path and collided with itself. Fixed by granting Storage Blob Data
-          # Contributor on the storage account backing the Function App's deployment package
-          # (greenluxfuncdevidckowude) -- see infra/README.md. The retry loop stays as a safety
-          # net for genuine transient conflicts, not as the primary fix.
-          for attempt in 1 2 3; do
-            if az functionapp deployment source config-zip \
-                --name func-greenlux-etl-dev-idckowude2cgc \
-                --resource-group rg-greenlux-sentinel \
-                --src build/function-deploy.zip; then
-              exit 0
-            fi
-            echo "config-zip attempt $attempt failed, retrying in 20s..." >&2
-            sleep 20
-          done
-          echo "config-zip failed after 3 attempts" >&2
-          exit 1
+          # TEMP DIAGNOSTIC (single attempt, --debug): the previous fix (granting Storage Blob
+          # Data Contributor) was based on an unverified guess and did not resolve the 409 -- a
+          # local --debug capture now shows the working path pulls the storage account key
+          # straight out of the AzureWebJobsStorage app setting rather than using the caller's
+          # storage RBAC at all, which the CI identity could already read via Contributor. This
+          # run exists purely to see, from CI itself, whether that storage upload is even
+          # attempted or skipped -- no more changes until we have that answer.
+          az functionapp deployment source config-zip \
+            --name func-greenlux-etl-dev-idckowude2cgc \
+            --resource-group rg-greenlux-sentinel \
+            --src build/function-deploy.zip \
+            --debug
 
       - name: Verify agent API health
         run: |
