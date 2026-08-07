@@ -214,14 +214,22 @@ for why, and keep running infra changes manually per this README's earlier secti
   plain `repo:owner/repo:environment:name` form without IDs; a federated credential created with
   the ID-less form gets a hard `AADSTS700213: No matching federated identity record` at auth time.
 - **Permissions, deliberately narrow — RBAC scoped to the exact resources touched, not the whole
-  resource group**: `Contributor` on `ca-greenlux-agents-dev` and
-  `func-greenlux-etl-dev-idckowude2cgc` individually (not the whole resource group), `AcrPush`
-  (data-plane) on the registry, and `Storage Blob Data Contributor` on the storage account backing
-  the Function App's deployment package (`greenluxfuncdevidckowude`). That last one was a real gap
-  hit live: without it, `az functionapp deployment source config-zip` silently falls back from its
-  fast direct-to-storage upload path to the legacy Kudu `/api/zipdeploy` endpoint, which
-  consistently 409'd ("ongoing deployment") on every CI attempt while the identical command
-  succeeded instantly when run by an identity that already had storage access. **No
+  resource group**: `Contributor` on `ca-greenlux-agents-dev`,
+  `func-greenlux-etl-dev-idckowude2cgc`, and `plan-greenlux-etl-dev` (the Function App's App
+  Service Plan) individually, plus `AcrPush` (data-plane) on the registry. The plan-level grant was
+  a real gap hit live and worth recording precisely because the failure mode was so misleading:
+  `az functionapp deployment source config-zip` has a fast direct-to-storage upload path for
+  Run-From-Package Linux Function Apps, but before using it the CLI first `GET`s the app's App
+  Service Plan to detect Consumption vs. Premium. Without RBAC on the plan specifically (RBAC on
+  the Function App site does not cascade to its plan), that GET 403s, the CLI retries it five times
+  over about 40 seconds, then *silently* falls back to the legacy Kudu `/api/zipdeploy` endpoint —
+  which then 409s ("ongoing deployment") on every attempt, with no indication in the normal output
+  that a permissions problem upstream is the actual cause. Confirmed by running the same command
+  with `--debug` from CI itself and reading the raw request trace; two earlier guesses (an az CLI
+  version mismatch, then `Storage Blob Data Contributor` on the storage account) were tried first
+  and ruled out — the CLI's fast path authenticates to blob storage using the account key embedded
+  in the `AzureWebJobsStorage` app setting, not the caller's storage RBAC, so that grant was never
+  going to matter. **No
   `Microsoft.Authorization/roleAssignments/write` (i.e. no `User Access Administrator`) and no Key
   Vault access** — which is exactly why infra changes stay manual:
   `infra/modules/container-apps.bicep`/`functions.bicep` create RBAC role assignments, and a full
@@ -249,8 +257,8 @@ for why, and keep running infra changes manually per this README's earlier secti
 - **The CI managed identity's RBAC grants aren't tracked in committed IaC** — they were created
   ad hoc (`az role assignment create`, and once via a throwaway Bicep template to work around a
   CLI bug) rather than declared in `infra/*.bicep`. Reproducing `id-greenlux-github-deploy`'s
-  permissions from scratch means redoing the four grants listed above by hand; nothing in `infra/`
-  would recreate them.
+  permissions from scratch means redoing the four grants listed above (Contributor ×3, AcrPush ×1)
+  by hand; nothing in `infra/` would recreate them.
 - The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription has
   been deleted (confirmed via `az cognitiveservices account show` returning `ResourceNotFound`).
 
