@@ -45,6 +45,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Upgrade az CLI
+        run: |
+          # The runner's preinstalled az CLI is often several versions behind and has shown
+          # different (buggier) deployment-status handling in `functionapp deployment source
+          # config-zip` -- live-verified in Phase 5: this exact command consistently 409'd from
+          # CI while the same command against the same app succeeded immediately from a machine
+          # running az CLI 2.89.0. Pin to a known-good recent version rather than trust whatever
+          # ubuntu-latest ships.
+          az version
+          az upgrade --yes --only-show-errors
+          az version
+
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
