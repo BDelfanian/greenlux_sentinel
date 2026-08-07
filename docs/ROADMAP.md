@@ -172,9 +172,11 @@ correction note for the full story.
       changes (that would need `User Access Administrator` + Key Vault read, a materially bigger
       grant than what was agreed — see docs/PROGRESS_LOG.md). OIDC via a user-assigned managed
       identity (Entra app registration is blocked for this tenant's accounts — same restriction
-      hit in Phase 4's Power BI provisioning), RBAC scoped to the exact two compute resources +
-      `AcrPush` on the registry, gated by a GitHub Environment requiring manual approval before
-      the job runs.
+      hit in Phase 4's Power BI provisioning), RBAC scoped to the exact compute resources touched
+      (including the Function App's App Service Plan, not just the site — see
+      docs/PROGRESS_LOG.md for why that distinction mattered) + `AcrPush` on the registry, gated by
+      a GitHub Environment requiring manual approval before the job runs. **Verified with a real
+      `push`-triggered run that went green end-to-end**, not just written and assumed to work.
 
 **Phase 5 is now fully closed** — every item above is live-verified against the real deployed
 environment, not just written or deployed without crashing.

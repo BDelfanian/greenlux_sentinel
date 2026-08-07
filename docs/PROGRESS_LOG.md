@@ -10,6 +10,64 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 5 (continued) — deploy-on-merge CI's first real run, and the 409 saga
+
+**Completed:** 2026-08-07
+
+**Done:** The previous entry's "hasn't had a real push-triggered run yet" caveat turned out to be
+load-bearing — the workflow needed two more real fixes before a push-triggered run went green
+end-to-end. Both are now confirmed via a clean run (agent API image build+push, Container App
+update, Function App zip-deploy, `/healthz` check all succeeded from a real `push` trigger).
+
+- **Federated credential subject was wrong.** The first live run failed at OIDC auth:
+  `AADSTS700213: No matching federated identity record found for presented assertion subject
+  'repo:BDelfanian@149973122/greenlux_sentinel@1324507716:environment:deploy'`. The credential had
+  been created with the plain `repo:BDelfanian/greenlux_sentinel:environment:deploy` form (matching
+  most docs/examples), but GitHub's actual OIDC token subject claim embeds numeric owner/repo IDs.
+  Fixed by deleting and recreating the federated credential with the exact subject from the error
+  message. `infra/README.md` corrected to show the ID-bearing form.
+- **The real fight: `az functionapp deployment source config-zip` 409ing on every single CI
+  attempt** ("ongoing deployment"), while the identical command against the identical app succeeded
+  immediately every time when run locally. This took several wrong turns before landing on the
+  actual cause — recorded here in full because the wrong turns are exactly what a future session
+  (or Claude) would otherwise re-try:
+  - Ruled out: rapid-succession timing/self-collision (waited out a 90s cooldown, still failed),
+    a stuck Kudu deployment lock (restarted the Function App, still failed identically), az CLI
+    version skew (upgraded CI's az CLI from 2.88.0 to match local's 2.89.0 exactly, still failed),
+    SCM basic-auth publishing policy (already allowed), IP/network restrictions (allow-all, no
+    VNet). **Also wrongly diagnosed and fixed**: granted `Storage Blob Data Contributor` on the
+    storage account backing the deployment package, reasoning that the CLI's fast direct-to-storage
+    upload path needed caller storage RBAC — plausible, committed, still failed, so evidently wrong
+    (later confirmed: that path authenticates to blob storage with the account key embedded in the
+    `AzureWebJobsStorage` app setting, not caller RBAC at all; the grant was a no-op and was
+    subsequently removed).
+  - **Actual cause**, found by adding `--debug` to a live CI run and reading the raw request trace
+    rather than continuing to guess: `config-zip`'s fast path `GET`s the Function App's App Service
+    Plan (`Microsoft.Web/serverfarms/plan-greenlux-etl-dev`) to detect Consumption vs. Premium
+    before deciding which upload method to use. The CI identity had RBAC on the Function App site
+    but never on its plan (RBAC on a site does not cascade to its plan) — that GET 403'd, the CLI
+    silently retried it 5 times over ~40 seconds, then fell back to the legacy Kudu
+    `/api/zipdeploy` endpoint, which then 409'd on every attempt. None of this was visible in the
+    normal (non-`--debug`) output, which only ever showed the downstream 409 — a real lesson in
+    when to stop pattern-matching on the visible error and go get the raw trace instead.
+  - **Fix**: granted `Contributor` on `plan-greenlux-etl-dev` directly. Confirmed working: the
+    "Deploy Function App package" step now completes in ~19 seconds (the fast path) instead of
+    hanging through 3+ retries.
+- The retry loop in `deploy.yml`'s Function App deploy step was kept (3 attempts, 20s backoff) as a
+  genuine safety net for transient conflicts, but is no longer covering for a real permissions gap.
+
+**Deviations from the original plan:** None beyond the previous entry's — this is a correction to
+that entry's optimistic "Phase 5 has nothing outstanding," not a new scope decision. The identity's
+final RBAC set is `Contributor` on `ca-greenlux-agents-dev`, `func-greenlux-etl-dev-idckowude2cgc`,
+and `plan-greenlux-etl-dev`, plus `AcrPush` on the registry — one more grant than originally
+recorded, still none of it `roleAssignments/write` or Key Vault access.
+
+**Next step:** Phase 5 is now genuinely, verifiably complete — a real `push`-triggered run has gone
+green end-to-end with human approval at the gate. Phase 6 (portfolio polish: README architecture
+diagram, demo video/GIF, requirements-traceability sanity pass) is next, fully unblocked.
+
+---
+
 ## Phase 5 (continued) — deploy-on-merge CI, Phase 5 truly complete
 
 **Completed:** 2026-08-07
