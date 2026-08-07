@@ -3,7 +3,7 @@
 Phased so each milestone produces something runnable/demoable, not a big-bang integration at the
 end. Check items off as they land; don't mark a phase done until its own checklist is clean.
 
-## Phase 0 — Scaffolding (current)
+## Phase 0 — Scaffolding
 
 - [x] Local repo + folder structure
 - [x] Documentation set (this file and its siblings)
@@ -181,8 +181,11 @@ correction note for the full story.
 **Phase 5 is now fully closed** — every item above is live-verified against the real deployed
 environment, not just written or deployed without crashing.
 
-## Phase 6 — Polish for portfolio presentation
+## Phase 6 — Polish for portfolio presentation (complete)
 
-- [ ] README architecture diagram matches what's actually built
-- [ ] Short demo video/GIF
-- [ ] Sanity pass on [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) — every row still true
+- [x] README architecture diagram matches what's actually built
+- [x] Short demo video/GIF
+- [x] Sanity pass on [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) — every row still true
+
+All six roadmap phases are now complete — see docs/PROGRESS_LOG.md's top entry for what's left as
+optional, non-blocking follow-up (none of it required for the portfolio deliverable).

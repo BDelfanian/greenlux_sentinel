@@ -10,6 +10,82 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 6 — portfolio polish complete
+
+**Completed:** 2026-08-07
+
+**Done:** All three Phase 6 items closed in one session.
+
+- **README architecture diagram corrected** (`README.md`) — the old diagram fed the "Top-100 ETF
+  Holdings" Kaggle dataset straight into the risk model, which has been wrong since the Phase 2
+  Tier 2 correction (CLAUDE.md decision #2's correction note). Relabeled it as descriptive/unlinked,
+  added the real Tier 2 source (5 issuer-verified UCITS ETF holdings, fetched live), and added the
+  Agent API (Azure Container Apps, fronted by APIM) as an explicit entry point — the old diagram had
+  no representation of how a caller actually reaches the system at all. Added a short prose caveat
+  under the diagram and a new **Deployment** section spelling out the deploy-on-merge CI's
+  deliberate app-level-only scope (agent API image + Function App package; `infra/*.bicep` stays a
+  manual step — see the Phase 5 entries below for why). Also fixed the **Status** banner (was still
+  "Phases 0-3 complete... Not runnable yet", untouched since the scaffolding commit) and the
+  **Getting started** section (was still the pre-Phase-1 placeholder; now the real `docker compose
+  up` + `uvicorn` local-dev flow, matching `scripts/setup_env.ps1` and `docker-compose.yml` as they
+  actually exist today).
+- **Demo GIF** (`docs/assets/demo.gif`, embedded in `README.md`) — no screen-recording or video
+  tooling was available in this CLI environment (no ffmpeg/asciinema/agg/terminalizer, no GUI
+  capture), so built one from **real captured output** instead of a screen recording: started the
+  Agent API locally against the already-running local Postgres + Cosmos containers (real seeded
+  data from earlier phases), called `/healthz` and `/risk/{fund_id}` for real over `curl`, then
+  rendered that actual transcript as a terminal-style animated GIF via Pillow (script not kept in
+  the repo — one-off). Deliberately picked `/risk/{fund_id}` as the demo surface: it's fully
+  deterministic (no LLM call, no cost, no external dependency beyond the local containers) and
+  shows the flagship signal directly — `0P0001BT2F` (iShares MSCI World SRI UCITS ETF, 5/5-globe
+  claim) scores 54.31 vs. `0P0000OO20` (plain S&P 500 tracker, no ESG claim) at 2.48, real numbers
+  from the real local stack.
+  - **Real finding surfaced in the process, not yet a blocker**: `/sql` (the NL2SQL agent) 500'd
+    locally — `openai.APIConnectionError` against `AZURE_OPENAI_ENDPOINT=greenlux-openai
+    .openai.azure.com` in the local `.env`. That hostname matches the resource the user deleted
+    from the old `Azure for Students` subscription during Phase 5 cleanup (see the "Cleanup"
+    roadmap entry) — the local `.env` was never updated to point at whichever Azure OpenAI
+    resource the live Container App actually uses via Key Vault. Doesn't affect the live Azure
+    deployment (Container App reads `azure-openai-api-key`/endpoint from Key Vault, not this local
+    file) and wasn't investigated further since `/risk` alone was sufficient for the demo — but a
+    future session doing local dev work with `/sql`, `/dashboard`, or `/report/*` will hit the same
+    500 until the local `.env`'s `AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_API_KEY` are updated to the
+    current resource.
+- **Requirements-traceability sanity pass** (`docs/REQUIREMENTS_TRACEABILITY.md`) — checked every
+  row against everything shipped since it was last touched; found and fixed two real gaps rather
+  than a clean pass:
+  - Row 10 (Luxembourg framing) didn't disclose that the flagship risk-score *demo* itself runs on
+    5 Irish-domiciled UCITS ETFs, not Luxembourg ones (DATA.md's own "known limitation" section,
+    written in Phase 2, was never linked from the traceability doc). Added the caveat + link.
+  - Row 12 (dataset formats) described Cosmos DB purely in terms of the two original Kaggle
+    sources, omitting that the number actually powering the risk score is a third, non-Kaggle,
+    live-fetched source (the same Phase 2 correction). Added a note + link.
+  - Everything else (rows 1-9, 11, 13-14, and the "explicit non-goals" list) checked out: verified
+    via direct grep that no fabricated `sfdr_article` column, no Gremlin usage, no chat UI, and no
+    vector-store/RAG code exists anywhere in `src/`/`infra/` (CLAUDE.md decisions #1/#3/#4/#5 all
+    still holding), and that the Azure-service-map count (11 Azure-branded services + Power BI
+    Service + GitHub Actions = 13 total rows) still matches row 9's "11 distinct \[Azure\]
+    services" claim.
+
+**Deviations from the original plan:** The demo asset is a rendered transcript of real captured
+CLI output, not a screen-recorded video/GIF — the environment this session ran in has no video or
+terminal-recording tooling installed (checked for ffmpeg, asciinema, agg, terminalizer; none
+present, and no GUI capture is available to a CLI agent). Judged this an acceptable substitute
+since every value shown is real output from the real local stack, not fabricated or illustrative
+data — but it's worth knowing this is why `docs/assets/demo.gif` looks like a rendered terminal
+rather than a screen capture, in case a future session wants to redo it as an actual screen
+recording (e.g. of the Power BI dashboard or the FR/DE report output, which weren't demoed here).
+
+**Next step:** Phase 6 is complete — this was the last item on the roadmap. Nothing is currently
+blocking; candidate follow-ups for a future session, none urgent: (1) fix the local `.env`'s stale
+`AZURE_OPENAI_ENDPOINT` so `/sql`/`/dashboard`/`/report/*` work in local dev too, not just against
+the live deployment; (2) a second demo asset showing the Power BI dashboard or a multilingual
+report draft, since this one only covers the risk-score endpoint; (3) DATA.md's still-open
+candidate — pulling a real LU-domiciled fund into the verified Tier 2 set (Amundi/BNP Paribas),
+which was left as a non-blocking follow-up back in Phase 2.
+
+---
+
 ## Phase 5 (continued) — deploy-on-merge CI's first real run, and the 409 saga
 
 **Completed:** 2026-08-07

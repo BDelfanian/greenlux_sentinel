@@ -13,8 +13,9 @@ Built as a portfolio project targeting the Luxembourg investment-fund industry, 
 SFDR disclosures and marketing materials — see [docs/DATA.md](docs/DATA.md#why-this-topic) for
 sourcing.
 
-> **Status:** Phases 0-3 complete (data pipeline, core agents, MCP servers) — see
-> [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
+> **Status:** Phases 0-5 complete and **live-deployed on Azure** (data pipeline, core agents, MCP
+> servers, Power BI + report generation, Azure infra + CI/CD) — Phase 6 (portfolio polish) is
+> in progress. See [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
 > [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for session-by-session detail.
 
 ## Why this exists
@@ -32,15 +33,25 @@ diff in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#differentiation-from-agentic
 ```mermaid
 flowchart TB
     subgraph Sources["Data Sources"]
-        A1[Morningstar European Funds - Kaggle CSV]
-        A2[Top-100 ETF Holdings - Kaggle CSV]
+        A1[Morningstar European Funds - Kaggle CSV, ~67k funds]
+        A2["Top-100 ETF Holdings - Kaggle CSV<br/>(descriptive only - no sustainability claim,<br/>NOT linked to the risk score)"]
         A3[Public Company ESG Ratings - Kaggle JSON]
-        A4[GLEIF API - live LU legal-entity data]
+        A4["5 issuer-verified UCITS ETF holdings<br/>(fetched live from issuer sites)"]
+        A5[GLEIF API - live LU legal-entity data]
     end
 
+    CALLER(["Analyst / API caller"]) -->|Azure API Management| FASTAPI
+
+    subgraph API["Agent API - Azure Container Apps"]
+        FASTAPI[FastAPI - one REST route per agent]
+    end
+
+    TIMER[["Azure Functions<br/>(daily timer trigger)"]] -.also triggers.-> ETL
+    FASTAPI --> SUP
+
     subgraph Storage["Azure Data Layer"]
-        PG[(Azure PostgreSQL Flexible Server)]
-        COS[(Azure Cosmos DB - NoSQL/Core API)]
+        PG[(PostgreSQL Flexible Server<br/>67k funds + audit log)]
+        COS[(Cosmos DB - NoSQL/Core API<br/>holdings + ESG documents)]
     end
 
     subgraph MCP["MCP Servers"]
@@ -67,9 +78,10 @@ flowchart TB
     end
 
     A1 --> ETL
-    A2 --> ETL
+    A2 -. unlinked, descriptive .-> ETL
     A3 --> ETL
-    A4 --> MCP_GLEIF
+    A4 --> ETL
+    A5 --> MCP_GLEIF
     ETL --> PG
     ETL --> COS
     PG --> MCP_PG
@@ -95,6 +107,31 @@ flowchart TB
     Agents -. every tool call logged .-> AUDIT
 ```
 
+The risk score is computed only for the 5 issuer-verified ETFs (A4) — the original "Top-100 ETF
+Holdings" dataset (A2) turned out to have zero ticker overlap with the Tier 1 fund table and no
+sustainability claim of its own, so it's kept only as a separate, unlinked descriptive dataset.
+See [CLAUDE.md](CLAUDE.md#decisions-that-must-not-be-quietly-reverted) decision 2 and
+[docs/DATA.md](docs/DATA.md#tier-2-verified-holdings-phase-2-correction) for the full story.
+
+## Demo
+
+![Agent API demo: calling /healthz and /risk/{fund_id} against the local dev stack, showing a real Greenwashing Risk Score computed from real holdings data](docs/assets/demo.gif)
+
+Real output from the Agent API (same FastAPI app deployed on Azure Container Apps) running
+against the local Postgres + Cosmos dev stack: a fund claiming a 5/5-globe Morningstar
+Sustainability Rating scores 54.31 (large claim-vs-holdings gap), vs. 2.48 for a plain S&P 500
+tracker with no sustainability claim at all — the core signal this project surfaces.
+
+## Deployment
+
+Live on Azure — 11 distinct services, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#azure-service-map)
+for the full map. CI (`.github/workflows/ci.yml`) runs lint + tests on every push/PR. A separate
+deploy-on-merge workflow (`.github/workflows/deploy.yml`) rebuilds and redeploys the agent API
+image and the ETL Function App package on every push to `main` that touches app code, gated by a
+required manual approval — **app-level only**: it deliberately does not apply `infra/*.bicep`
+changes, since that would need a materially bigger RBAC grant (`User Access Administrator` + Key
+Vault read) than what was agreed. Infra changes stay a manual `az deployment group create` step.
+
 ## Documentation map
 
 | Doc | Purpose |
@@ -118,15 +155,18 @@ flowchart TB
 
 ## Getting started
 
-Not runnable yet — this is the scaffolding commit. See [docs/ROADMAP.md](docs/ROADMAP.md) for
-the build order. Once the data layer lands:
+Local dev runs against Postgres + a Cosmos DB NoSQL emulator in Docker, the same config surface
+(`config.py`) that the live Azure deployment uses:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e .
-copy .env.example .env   # fill in Azure connection strings and API keys
+.\scripts\setup_env.ps1               # venv, pip install -e ".[dev]", .env from .env.example
+docker compose up -d                  # local Postgres + Cosmos NoSQL emulator
+# fill in .env: Azure OpenAI, LangSmith, Power BI, etc. (Postgres/Cosmos already point at Docker)
+uvicorn greenlux_sentinel.api.app:app --reload   # Agent API on http://localhost:8000
 ```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#agent-api) for the full route list, or hit the
+live-deployed Container App directly via its APIM gateway if you have the auth token.
 
 ## License
 
