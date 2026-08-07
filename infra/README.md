@@ -208,18 +208,26 @@ for why, and keep running infra changes manually per this README's earlier secti
   subscription-scoped). A user-assigned managed identity is a plain RBAC-governed Azure resource
   instead, and is Microsoft's current recommended approach for GitHub Actions OIDC anyway — not
   merely a workaround. Federated credential subject:
-  `repo:BDelfanian/greenlux_sentinel:environment:deploy` (scoped to the `deploy` GitHub
-  Environment specifically, not just the branch).
+  `repo:BDelfanian@149973122/greenlux_sentinel@1324507716:environment:deploy` (scoped to the
+  `deploy` GitHub Environment specifically, not just the branch) — note the numeric owner/repo IDs:
+  GitHub's actual OIDC token subject claim includes them even though most docs/examples show the
+  plain `repo:owner/repo:environment:name` form without IDs; a federated credential created with
+  the ID-less form gets a hard `AADSTS700213: No matching federated identity record` at auth time.
 - **Permissions, deliberately narrow — RBAC scoped to the exact resources touched, not the whole
   resource group**: `Contributor` on `ca-greenlux-agents-dev` and
-  `func-greenlux-etl-dev-idckowude2cgc` individually (not the whole resource group), plus
-  `AcrPush` (data-plane) on the registry. **No `Microsoft.Authorization/roleAssignments/write`
-  (i.e. no `User Access Administrator`) and no Key Vault access** — which is exactly why infra
-  changes stay manual: `infra/modules/container-apps.bicep`/`functions.bicep` create RBAC role
-  assignments, and a full `az deployment group create` also needs
-  `postgresAdministratorPassword`/`apiAuthToken` from Key Vault. Granting either would have been a
-  materially bigger permission footprint than "deploy the app," so the scope was deliberately
-  split — see docs/PROGRESS_LOG.md for the full reasoning.
+  `func-greenlux-etl-dev-idckowude2cgc` individually (not the whole resource group), `AcrPush`
+  (data-plane) on the registry, and `Storage Blob Data Contributor` on the storage account backing
+  the Function App's deployment package (`greenluxfuncdevidckowude`). That last one was a real gap
+  hit live: without it, `az functionapp deployment source config-zip` silently falls back from its
+  fast direct-to-storage upload path to the legacy Kudu `/api/zipdeploy` endpoint, which
+  consistently 409'd ("ongoing deployment") on every CI attempt while the identical command
+  succeeded instantly when run by an identity that already had storage access. **No
+  `Microsoft.Authorization/roleAssignments/write` (i.e. no `User Access Administrator`) and no Key
+  Vault access** — which is exactly why infra changes stay manual:
+  `infra/modules/container-apps.bicep`/`functions.bicep` create RBAC role assignments, and a full
+  `az deployment group create` also needs `postgresAdministratorPassword`/`apiAuthToken` from Key
+  Vault. Granting either would have been a materially bigger permission footprint than "deploy the
+  app," so the scope was deliberately split — see docs/PROGRESS_LOG.md for the full reasoning.
 - **Approval gate**: the `deploy` GitHub Environment requires manual review
   (Settings → Environments → deploy) before the job runs — a merge to `main` does not deploy
   unattended. `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID` are plain repo
@@ -238,6 +246,11 @@ for why, and keep running infra changes manually per this README's earlier secti
   definition. No policies (rate limiting, subscription keys) are configured.
 - **Infra changes (`infra/*.bicep`) still require a manual `az deployment group create`** — see
   "Deploy-on-merge CI" above for why that's a deliberate scope decision, not an oversight.
+- **The CI managed identity's RBAC grants aren't tracked in committed IaC** — they were created
+  ad hoc (`az role assignment create`, and once via a throwaway Bicep template to work around a
+  CLI bug) rather than declared in `infra/*.bicep`. Reproducing `id-greenlux-github-deploy`'s
+  permissions from scratch means redoing the four grants listed above by hand; nothing in `infra/`
+  would recreate them.
 - The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription has
   been deleted (confirmed via `az cognitiveservices account show` returning `ResourceNotFound`).
 
