@@ -216,26 +216,15 @@ for why, and keep running infra changes manually per this README's earlier secti
 - **Permissions, deliberately narrow — RBAC scoped to the exact resources touched, not the whole
   resource group**: `Contributor` on `ca-greenlux-agents-dev`,
   `func-greenlux-etl-dev-idckowude2cgc`, and `plan-greenlux-etl-dev` (the Function App's App
-  Service Plan) individually, plus `AcrPush` (data-plane) on the registry. The plan-level grant was
-  a real gap hit live and worth recording precisely because the failure mode was so misleading:
-  `az functionapp deployment source config-zip` has a fast direct-to-storage upload path for
-  Run-From-Package Linux Function Apps, but before using it the CLI first `GET`s the app's App
-  Service Plan to detect Consumption vs. Premium. Without RBAC on the plan specifically (RBAC on
-  the Function App site does not cascade to its plan), that GET 403s, the CLI retries it five times
-  over about 40 seconds, then *silently* falls back to the legacy Kudu `/api/zipdeploy` endpoint —
-  which then 409s ("ongoing deployment") on every attempt, with no indication in the normal output
-  that a permissions problem upstream is the actual cause. Confirmed by running the same command
-  with `--debug` from CI itself and reading the raw request trace; two earlier guesses (an az CLI
-  version mismatch, then `Storage Blob Data Contributor` on the storage account) were tried first
-  and ruled out — the CLI's fast path authenticates to blob storage using the account key embedded
-  in the `AzureWebJobsStorage` app setting, not the caller's storage RBAC, so that grant was never
-  going to matter. **No
+  Service Plan) individually, plus `AcrPush` (data-plane) on the registry. **No
   `Microsoft.Authorization/roleAssignments/write` (i.e. no `User Access Administrator`) and no Key
   Vault access** — which is exactly why infra changes stay manual:
   `infra/modules/container-apps.bicep`/`functions.bicep` create RBAC role assignments, and a full
   `az deployment group create` also needs `postgresAdministratorPassword`/`apiAuthToken` from Key
   Vault. Granting either would have been a materially bigger permission footprint than "deploy the
-  app," so the scope was deliberately split — see docs/PROGRESS_LOG.md for the full reasoning.
+  app," so the scope was deliberately split — see docs/PROGRESS_LOG.md for the full reasoning. (The
+  plan-level grant is explained in detail in the troubleshooting note just below — it wasn't part
+  of the original design, it was a live-discovered gap.)
 - **Approval gate**: the `deploy` GitHub Environment requires manual review
   (Settings → Environments → deploy) before the job runs — a merge to `main` does not deploy
   unattended. `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID` are plain repo
@@ -246,6 +235,99 @@ for why, and keep running infra changes manually per this README's earlier secti
   itself isn't a GitHub-protected branch (it isn't, here) — no branch qualifies, so nothing can
   ever deploy, with no obvious error at trigger time. Left `deployment_branch_policy` unset
   instead; the workflow's own `on.push.branches: [main]` already restricts what can trigger it.
+
+### Troubleshooting reference: the Function App 409 (root cause)
+
+Getting the first real `push`-triggered run to go green took several hours of debugging a
+`WARNING: Deployment endpoint responded with status code 409` / `ERROR: There may be an ongoing
+deployment...` failure on the "Deploy Function App package" step — deterministically, on every CI
+attempt, while the identical `az functionapp deployment source config-zip` command against the
+identical app succeeded immediately every time when run from a developer machine. Recorded here in
+full (not just the final answer) because the wrong turns are exactly what a future session would
+otherwise re-attempt from scratch.
+
+**Symptom.** Every CI attempt: `WARNING: Getting scm site credentials for zip deployment` →
+`WARNING: Starting zip deployment...` → `WARNING: Deployment endpoint responded with status code
+409` → the CLI's generic `ERROR: There may be an ongoing deployment or your app setting has
+WEBSITE_RUN_FROM_PACKAGE...` message. This message is genuinely misleading for this failure mode —
+neither half of the "or" was true.
+
+**Ruled out, in order, each with a live test (not just reasoning about it):**
+
+1. *Rapid-succession timing / self-collision.* Waited a 90s cooldown between attempts — still
+   failed identically, immediately, every time.
+2. *A stuck Kudu deployment lock.* Restarted the Function App (`az functionapp restart`) right
+   before a run — still failed identically.
+3. *az CLI version skew between the GitHub-hosted runner and a developer machine.* Added an
+   explicit `az upgrade` step to CI, confirmed via the run log it went from 2.88.0 to 2.89.0
+   (matching local exactly) — still failed identically.
+4. *SCM basic-auth publishing policy or IP/network restrictions.* Checked directly
+   (`basicPublishingCredentialsPolicies/scm` → `allow: true`; `ipSecurityRestrictions` → allow-all,
+   no VNet) — neither was the cause.
+5. **Wrongly diagnosed and actually shipped, once**: granted `Storage Blob Data Contributor` on the
+   storage account backing the deployment package, reasoning that `config-zip`'s fast
+   direct-to-storage upload path needed caller storage RBAC. Plausible-sounding, committed and
+   pushed — still failed. Later confirmed wrong: that path authenticates to blob storage using the
+   storage account key embedded directly in the `AzureWebJobsStorage` app setting (readable via
+   ordinary `Microsoft.Web/sites/config/list/action`, which `Contributor` on the site already
+   grants), not the caller's storage-account RBAC at all. The grant was a harmless no-op and was
+   later removed.
+
+**Actual root cause**, found only by adding `--debug` to a live CI run and reading the raw
+request/response trace instead of continuing to guess from the paraphrased error: `config-zip`'s
+fast path first issues `GET
+.../providers/Microsoft.Web/serverfarms/plan-greenlux-etl-dev?api-version=2025-05-01` — reading the
+Function App's **App Service Plan** — to detect Consumption vs. Premium before deciding which
+upload method to use. The CI identity had RBAC on the Function App *site*
+(`func-greenlux-etl-dev-idckowude2cgc`) but never on its *plan* (`plan-greenlux-etl-dev`) — RBAC on
+a site does not cascade to its plan, they're separate resources. That `GET` came back `403`, the
+CLI silently retried it five times over roughly 40 seconds, then fell back — with no message to
+that effect anywhere in normal output — to the legacy Kudu `/api/zipdeploy` endpoint, which then
+409'd on every attempt regardless of retries, restarts, or elapsed time, because the fallback path
+itself has some collision-prone behavior under this app's Run-From-Package configuration that was
+never actually diagnosed (it didn't need to be — avoiding the fallback path entirely was sufficient
+and is the correct fix regardless).
+
+**Fix**: `az role assignment create --role Contributor --scope .../serverfarms/plan-greenlux-etl-dev
+--assignee-object-id <identity principalId>`. Confirmed working immediately — the "Deploy Function
+App package" step now completes in about 19 seconds (the fast path) instead of hanging through
+multiple retries before failing.
+
+**Takeaway for next time a `config-zip`-family command misbehaves against a Linux Consumption
+Function App from an identity with narrowly-scoped RBAC**: grant RBAC on the App Service Plan
+resource, not only the site, and reach for `--debug` immediately rather than iterating on plausible
+theories — the CLI's own retry/fallback behavior on a 403 is silent enough that nothing in normal
+output points at a permissions problem at all.
+
+### Limitations and possible improvements
+
+What's here is deliberately scoped for a portfolio project, not a drop-in template for a real
+production pipeline. Concretely:
+
+- **Single environment, no promotion pipeline.** Everything deploys straight to `dev` — there's no
+  staging/prod split and no promotion gate between them. A real pipeline protecting a production
+  system would build once and promote the same artifact through environments rather than rebuild
+  per push.
+- **No automated test or lint gate before deploy.** The workflow builds and deploys unconditionally
+  on a successful build; a commit that builds but fails tests would still deploy. Adding a
+  `pytest`/lint step before the build-and-push steps, gating the job on it, would be the single
+  highest-value improvement here.
+- **No rollback automation.** Recovering from a bad deploy today means manually re-running
+  `az containerapp update --image <previous-sha-tag>` / re-running `config-zip` with an older
+  package — nothing in the workflow tracks "last known good" or offers a one-click revert.
+- **Infra changes (`infra/*.bicep`) are entirely manual**, by deliberate scope decision (see above)
+  rather than oversight — but it does mean infra and app deploys can drift out of sync with no
+  automated check that they're still compatible.
+- **The CI identity's RBAC isn't tracked in committed IaC** (see "Known gaps" below) — it exists
+  only as ad hoc `az role assignment create` calls (and the discovery process above), so
+  reprovisioning this pipeline from scratch means redoing those grants by hand.
+- **Health check is a single `/healthz` poll, not a real smoke test.** It confirms the container
+  came back up, not that the newly-deployed code actually works end-to-end (e.g. it wouldn't catch
+  a broken agent tool call or a bad DB migration).
+- **Deploy steps are hand-written shell (`az` CLI calls) rather than marketplace GitHub Actions**
+  (e.g. `azure/webapps-deploy`, `docker/build-push-action`) — a reasonable choice given the custom
+  `scripts/build_function_package.py` packaging step this app needs, but it means less community
+  battle-testing than a more conventional action-based pipeline would have.
 
 ## Known gaps
 
