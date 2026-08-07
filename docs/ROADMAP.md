@@ -74,7 +74,8 @@ correction note for the full story.
       paths now call through these modules; live-verified end to end against the local stack
       (see docs/PROGRESS_LOG.md)
 - [x] `gleif_server` — live API integration, verified live against api.gleif.org (lookup_lei,
-      search_lu_entities); not yet called by any agent (etl_agent is still a stub)
+      search_lu_entities); called by `agents/etl_agent.py`'s `cross_check_lu_entities()` as of
+      Phase 5
 - [x] `powerbi_server` — implemented against the real Power BI REST API surface
       (service-principal auth via azure-identity), request shaping unit-tested via
       httpx.MockTransport; **not** live-verified — no Power BI workspace/service principal is
@@ -98,10 +99,78 @@ correction note for the full story.
 
 ## Phase 5 — Azure deployment
 
-- [ ] Bicep IaC for the full service map in [ARCHITECTURE.md](ARCHITECTURE.md#azure-service-map)
-- [ ] CI/CD via GitHub Actions
-- [ ] Secrets in Key Vault, no local `.env` in any deployed path
-- [ ] Azure Monitor/Log Analytics wired alongside the Postgres audit log
+- [x] Bicep IaC for the full service map in [ARCHITECTURE.md](ARCHITECTURE.md#azure-service-map)
+      (`infra/main.bicep` + `infra/modules/*.bicep`, one module per resource) — **live-deployed**
+      to `rg-greenlux-sentinel` in `Subscription_greenlux` (`francecentral`); five real bugs found
+      and fixed against the live subscription (wrong Azure OpenAI SKU, an ACR-registry/AcrPull
+      role-assignment ordering problem, a wrong role-definition GUID) — see docs/PROGRESS_LOG.md
+      for the full story
+- [x] CI/CD via GitHub Actions (`.github/workflows/ci.yml` — ruff + pytest on push/PR; no deploy
+      job yet, by deliberate scope choice, not a blocker — see docs/PROGRESS_LOG.md)
+- [x] Secrets in Key Vault, no local `.env` in any deployed path — **live-verified**: the deployed
+      Container App reads `postgres-password`/`cosmos-key`/`azure-openai-api-key`/`api-auth-token`
+      from `kv-greenlux-dev-idckowud` via its own managed identity, confirmed by real end-to-end
+      API calls (see below). Found and fixed a real bug in this path: `config.py`'s Key Vault
+      overlay crashed entirely if any one of its 6 mapped secrets was missing, which would have
+      taken down every agent endpoint on the live deployment the moment
+      `langchain-api-key`/`powerbi-client-secret` (deliberately never auto-populated) were
+      touched — now skips missing secrets instead of aborting; `tests/test_config.py` added
+- [x] Azure Monitor/Log Analytics wired alongside the Postgres audit log
+      (`infra/modules/log-analytics.bicep` — live, `log-greenlux-dev` + `appi-greenlux-dev`)
+
+- [x] Agent API (`src/greenlux_sentinel/api/app.py`) — **live and verified end to end**: built,
+      pushed to `greenluxacrdevidckowude2cgc.azurecr.io`, and running on the deployed Container
+      App. Real calls against real live data: `POST /risk/0P0001EVL3` → a correctly computed risk
+      score with a real holdings-driven explanation (live Postgres + Cosmos); `POST /sql` → a
+      real Azure-OpenAI-generated query against live Postgres returning `36413` LU-domiciled
+      funds; an unauthenticated call to the same route correctly returned `401`
+- [x] ETL Agent implemented for real (`agents/etl_agent.py`) and **run live against Azure**:
+      67,098 funds loaded into the live Postgres, 99 Top-100 + 5 verified holdings docs into live
+      Cosmos, 22 LU management companies matched against live GLEIF, 19 real risk scores computed
+      via `risk_agent.score_all_verified()`. Still deliberately not a `supervisor.py` graph
+      node — invoked via the Agent API's `/etl/run` and the Functions timer trigger
+      (`function_app.py`, not yet itself deployed — see below)
+- [x] Azure Container Registry (`infra/modules/container-registry.bicep`) — live, passwordless
+      `AcrPull` via the Container App's managed identity confirmed working (image pull succeeded)
+
+- [x] Functions timer trigger **live and registered**: `func-greenlux-etl-dev-idckowude2cgc`'s
+      `scheduled_etl_run` shows up in the live host's own `/admin/functions` with the correct
+      `timerTrigger` binding, confirmed against the running instance directly (not just ARM's
+      view, which lagged repeatedly during this work). Getting there took six distinct real bugs
+      (zip path separators, `-e .` not surviving Oryx, a vendored folder Oryx silently dropped,
+      pip's cwd-relative local-path resolution, unreliable restart/stop-start recycling, and
+      per-package manylinux tag mismatches for compiled dependencies) — full story in
+      docs/PROGRESS_LOG.md. The working, reproducible build lives in
+      `scripts/build_function_package.py`; Oryx remote build is now explicitly disabled
+      (`SCM_DO_BUILD_DURING_DEPLOYMENT`/`ENABLE_ORYX_BUILD` = `'false'` in `functions.bicep`, so a
+      future Bicep redeploy doesn't silently re-enable it).
+- [x] APIM real API import — `apim.bicep` imports the live Container App's own
+      `/openapi.json` (FastAPI serves it for free); all 11 real routes confirmed via
+      `az apim api operation list`, and a real request through the actual gateway URL
+      (`https://apim-greenlux-dev-idckowude2cgc.azure-api.net/agents/healthz`) succeeded.
+- [x] `etl_agent.run_ingestion()`'s `data_dir` gap closed — `_resolve_data_dir()` falls back to
+      downloading the ADLS Gen2 landing container (`Storage Blob Data Reader` managed-identity
+      RBAC, no storage keys) when local `data/raw/` isn't present. **Live-verified with a genuine
+      success, not just a non-crashing deploy**: manually invoked the deployed Function App via
+      its admin API and confirmed via Application Insights — `"Executed
+      'Functions.scheduled_etl_run' (Succeeded, ..., Duration=26169ms)"`, `"ETL run complete:
+      {'funds_loaded': 67098, 'top100_holdings_docs': 99, 'verified_holdings_docs': 5,
+      'gleif_matched': 22}"` — from a cold, data-less deployment, matching the original manual
+      seeding numbers exactly. Getting there surfaced three more real bugs (an ADLS Gen2
+      directory-placeholder collision, a `config.py` field name that didn't match the
+      `LANDING_STORAGE_ACCOUNT_NAME` env var anywhere it was set, and an incomplete guessed
+      dependency list for `mcp`'s `--no-deps` install) — see docs/PROGRESS_LOG.md.
+
+**Phase 5 is now fully closed** — every item above is live-verified against the real deployed
+environment, not just written or deployed without crashing. Two things remain outside this
+session's scope, both explicitly handed to the user rather than assumed done:
+- No deploy-on-merge GitHub Actions job (deliberately deferred — needs the user's explicit
+  go-ahead on granting Azure deploy credentials to CI, a real trust-boundary decision proposed
+  but not yet actioned).
+- The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription —
+  deletion attempted, blocked by Claude Code's own permission classifier (destructive Azure
+  operations need direct tool-level approval); the exact command was handed to the user to run
+  themselves, not yet confirmed done.
 
 ## Phase 6 — Polish for portfolio presentation
 

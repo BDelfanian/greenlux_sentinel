@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+.vscode/
+.idea/
+tests/
+docs/
+notebooks/
+data/
+infra/
+Dockerfile
+.dockerignore
+docker-compose.yml
+local.settings.json

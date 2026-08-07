@@ -11,6 +11,7 @@ dist/
 .env
 *.env.local
 docs/private/
+local.settings.json
 
 # Data (raw/processed datasets are downloaded, not committed)
 data/raw/*

@@ -1,0 +1,25 @@
+# Human-readable manifest of this Function App's real runtime dependencies -- for local tooling
+# (VS Code's Azure Functions extension, `func start`) and reference only. It is NOT what actually
+# builds the deployed package -- see scripts/build_function_package.py's module docstring for why
+# (Azure's remote/Oryx build does not reliably work for this app, live-verified in Phase 5;
+# docs/PROGRESS_LOG.md has the full story) and infra/README.md's Functions deployment section for
+# the deploy flow. Keep this list in sync with build_function_package.py's package lists by hand.
+#
+# Deliberately narrower than pyproject.toml's `dependencies`: only what agents/etl_agent.py's
+# actual import chain needs at runtime (langchain/langgraph/langsmith/langchain-openai/
+# scikit-learn/fastapi/uvicorn are for the agent API and the LLM-calling agents, none of which
+# this Function imports).
+#
+# Not used by the Container App image (Dockerfile installs via pyproject.toml directly) or by
+# local dev (pip install -e .[dev]).
+azure-functions>=1.21.3,<2
+psycopg[binary]>=3.2.10,<4
+azure-cosmos>=4.9.0,<5
+azure-identity>=1.25.1,<2
+azure-keyvault-secrets>=4.10.0,<5
+azure-storage-blob>=12.24.0,<13
+pydantic-settings>=2.11.0,<3
+pandas>=2.3.3,<3
+httpx>=0.28.1,<1
+mcp>=1.16.0,<2
+-e .

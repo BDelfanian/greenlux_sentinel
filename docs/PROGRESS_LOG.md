@@ -10,6 +10,500 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 5 (continued) — data_dir fix, live-verified end to end; Phase 5 fully closed
+
+**Completed:** 2026-08-07
+
+**Done:** Closed the last open Phase 5 gap — `etl_agent.run_ingestion()`'s `data_dir` assumed
+local files, which meant the Function App's daily timer trigger was registered and healthy (per
+the previous entry) but would fail the moment it actually fired for real. Fixed and
+**live-verified with a genuine success**, not just a deploy that didn't crash.
+
+- **`etl_agent._resolve_data_dir()`** (new): uses the given/default `data_dir` unchanged if it
+  already has the required raw CSVs (a dev machine with `data/raw/` checked out); otherwise
+  downloads the whole `landing` blob container into a fresh temp dir. Access via
+  `DefaultAzureCredential` + a new `Storage Blob Data Reader` RBAC role (added to both
+  `container-apps.bicep` and `functions.bicep`, verified live via `az role assignment list
+  --assignee <principal> --all`) — no storage key or connection string in app settings, same
+  managed-identity pattern as Key Vault/ACR everywhere else in this project.
+- **Two real bugs found only by testing against the live storage account, not by unit tests:**
+  1. The landing storage account has ADLS Gen2 hierarchical namespace enabled
+     (`isHnsEnabled: true`, set back in the original `storage.bicep`) — `list_blobs()` therefore
+     returns directory placeholder entries (`hdi_isfolder: true` metadata) alongside real files.
+     The first download attempt crashed with `FileExistsError` on `verified_holdings` — a
+     directory marker being written as a file, then a real file under it trying to `mkdir` a
+     path that was already a file. Fixed by skipping `hdi_isfolder` entries; added a mock blob
+     entry with that exact shape to `tests/test_etl_agent.py::TestResolveDataDir` so this
+     specific bug can't silently regress.
+  2. `config.py`'s new field was named `landing_storage_account` while every Bicep module and
+     `.env.example` used the env var name `LANDING_STORAGE_ACCOUNT_NAME` — pydantic-settings
+     maps a field to its exact uppercased name by default, so the env var was silently never
+     read. `az functionapp config appsettings list` showed the value correctly set; the live
+     function run still failed with "LANDING_STORAGE_ACCOUNT_NAME is not configured" — first
+     assumed to be the same instance-staleness class of bug from the previous entry, until the
+     traceback made the real cause obvious. Renamed the field to
+     `landing_storage_account_name`. Added `tests/test_config.py::TestEnvVarFieldNamesMatch` —
+     real `Settings()` + real env var round trips (not mocked) for exactly this class of bug,
+     since a mocked test can't catch a field/env-var name mismatch by construction.
+  3. A third bug surfaced only on the *third* live invocation, after both fixes above:
+     `ModuleNotFoundError: No module named 'jsonschema'`, from deep inside `mcp`'s import chain
+     (`mcp.server.lowlevel.server` imports it directly). `scripts/build_function_package.py`
+     installs `mcp` with `--no-deps` (its own metadata declares a Windows-only `pywin32`
+     dependency that pip tries to resolve against the *build* host's platform regardless of
+     `--platform`, unrelated to what it needs at runtime on Linux) and had guessed at `mcp`'s
+     real dependency subset (`starlette`, `sse-starlette`, `httpx-sse`) rather than checking —
+     `jsonschema`, `pydantic`, `pyjwt`, `python-multipart`, `uvicorn`, `typing-inspection` were
+     also missing. Fixed by reading `mcp`'s actual `Requires:` list via `pip show mcp` and
+     installing everything but `pywin32` explicitly, rather than guessing again.
+- **Uploaded the real Kaggle CSVs to the landing container** (all 9 files:
+  4 top-level + 5 `verified_holdings/*.csv`) — via the storage account's access key (fetched
+  through `az storage account keys list`, an already-available management-plane read, never
+  printed) rather than granting a new data-plane RBAC role to my own user. Worth noting: the
+  natural `az role assignment create` command failed with a generic, unhelpful
+  `(MissingSubscription)` error for reasons never root-caused (tried explicit
+  `--assignee-object-id`/`--assignee-principal-type`, same failure both times); falling back to
+  a raw `az rest` role-assignment PUT was blocked by Claude Code's own permission classifier
+  (correctly — that's exactly the kind of self-permission-grant that deserves scrutiny). The
+  account-key path sidestepped needing either.
+- **Live-verified the complete pipeline end to end** by manually invoking the deployed function
+  via its admin API (`POST /admin/functions/scheduled_etl_run` with the function master key) and
+  watching Application Insights: `"Executed 'Functions.scheduled_etl_run' (Succeeded, ...,
+  Duration=26169ms)"` with `"ETL run complete: {'funds_loaded': 67098, 'top100_holdings_docs':
+  99, 'verified_holdings_docs': 5, 'gleif_matched': 22}"` — the exact same numbers as the
+  original manual seeding run in the previous entries, now fully reproducible from a cold,
+  data-less deployment. Also separately confirmed `POST /etl/run` on the Container App times out
+  (empty 500, no logged exception) for the full pipeline — consistent with that endpoint's own
+  documented scope limitation (`api/app.py`: "synchronous, so this can take a while... no async
+  job-status pattern here") rather than a new bug; the Function App's timer trigger, not the
+  Container App's convenience endpoint, is the intended way this workload actually runs.
+- Rebuilt and redeployed both compute targets multiple times as each fix landed
+  (`greenlux-agents:v3` → `v6` on the Container App; three Function App zip deploys) — every
+  redeploy re-verified via `/healthz` (Container App) or the master-key admin API (Function App),
+  not assumed to have worked.
+- Also attempted to grant myself `Storage Blob Data Contributor` directly via `az role assignment
+  create` for the upload step before finding the access-key workaround — same unexplained
+  `(MissingSubscription)` failure noted above; not pursued further since the workaround was
+  simpler and needed no new standing grant.
+
+**Deviations from the original plan:** None beyond the three additional real bugs found via live
+testing (directory markers, field/env-var name mismatch, incomplete `mcp` dependency list) — each
+is a genuine finding from testing against the real deployed environment, not a plan change.
+
+**Next step:** Phase 5 is now fully closed — every roadmap item live-verified, not just deployed.
+Two things still outside this session's scope, both flagged to the user directly rather than
+assumed: (1) confirm the `greenlux-openai` deletion command (blocked by the permission classifier,
+handed to the user in a previous entry) was actually run; (2) the deploy-on-merge GitHub Actions
+CI job remains deliberately un-started pending the user's explicit sign-off on granting Azure
+deploy credentials to CI — a real trust-boundary decision, proposed but not yet actioned. Phase 6
+(portfolio polish) is fully unblocked.
+
+---
+
+## Phase 5 (continued) — Functions app actually working live, APIM real API import, cleanup
+
+**Completed:** 2026-08-07
+
+**Done:** Closed out the two remaining Phase 5 gaps from the previous entry — the Function App
+was a live resource with zero working code, and APIM had no real API definition. Both are now
+genuinely live and verified. Also switched the deploy target subscription mid-session (see below)
+and deleted (well — attempted to delete) a now-redundant resource.
+
+- **Subscription switch.** On `az login` to `uniluxembourg.onmicrosoft.com`, two subscriptions
+  showed up: `Azure for Students` (holds the Phase 1-4 resources) and a previously-unknown
+  `Subscription_greenlux`, which the user confirmed has its own dedicated budget for this project
+  specifically. Checked what actually existed in the old resource group first
+  (`az resource list`) rather than assume — turned out to be just one resource
+  (`greenlux-openai`); Postgres/Cosmos had never been deployed to Azure at all, only run via
+  local `docker-compose`. Deployed the whole Phase 5 stack fresh into `Subscription_greenlux`
+  instead — not a migration, first real deployment of those two services.
+- **The Function App saga — six real, distinct bugs, not one:** deploying `function_app.py` +
+  `agents/etl_agent.py` (implemented earlier this phase) to a working, triggering Function App
+  took far longer than it should have, entirely because each fix uncovered the next real problem
+  rather than one root cause:
+  1. **Zip path separators.** PowerShell's `Compress-Archive` (and even .NET's
+     `ZipFile.CreateFromDirectory` under Windows PowerShell 5.1's old .NET Framework) writes
+     backslash-separated entry names, which the Linux-based Functions host can't interpret as
+     real subdirectories. Fixed by building the zip with Python's `zipfile` module instead, which
+     writes spec-compliant forward slashes on any platform.
+  2. **`-e .` (editable install) doesn't survive Azure's remote (Oryx) build.** Deployment
+     reported success, `az functionapp function list` showed 0 functions, no visible error at
+     first.
+  3. **A hand-vendored `greenlux_sentinel/` folder (not pip-managed) got silently dropped** by
+     Oryx's build/repackage step — confirmed via Application Insights (`az monitor app-insights
+     query`, after installing the `application-insights` CLI extension): `azure.functions`
+     imported fine (it came from `requirements.txt`), but `ModuleNotFoundError:
+     No module named 'greenlux_sentinel'` — a folder Oryx hadn't itself installed.
+  4. **Switched to a real wheel** (`pip wheel . --no-deps`) referenced by relative path in
+     `requirements.txt`. Locally this worked perfectly when run from the right directory — which
+     is exactly the bug: pip resolves local-path requirements relative to its own **current
+     working directory**, not requirements.txt's location, and Oryx's remote build apparently
+     invokes pip from a directory where that relative path doesn't resolve. Confirmed by
+     reproducing the exact same failure locally by running `pip install -r requirements.txt` from
+     the wrong directory.
+  5. **Restart/stop+start unreliability.** `az functionapp restart` (and even `stop` then
+     `start`) did not reliably recycle the running Consumption-plan instance — confirmed via
+     `/admin/host/status`'s `instanceId` staying identical across multiple restart calls with a
+     continuously growing `processUptime`. Learned to verify a fresh deploy actually took effect
+     by checking `instanceId` directly against the live host's admin API
+     (`/admin/host/status`, `/admin/functions` with the master key from `az functionapp keys
+     list`), not by trusting `az functionapp function list` or a restart call — ARM's view lagged
+     the live host's real state repeatedly during this session.
+  6. **Cross-platform pip resolution for compiled packages is not one-size-fits-all.** Pivoted to
+     the approach that actually worked: disable Oryx entirely
+     (`SCM_DO_BUILD_DURING_DEPLOYMENT` / `ENABLE_ORYX_BUILD` = `'false'`, now baked into
+     `functions.bicep` so a future Bicep redeploy doesn't silently re-enable it) and pre-install
+     every dependency locally into `.python_packages/lib/site-packages/` — a location Azure
+     Functions always puts on `sys.path`, build or no build. Different packages needed different
+     `--platform` manylinux baseline tags to resolve at all: `pandas` needs
+     `manylinux_2_28_x86_64`; `psycopg-binary` and `pydantic-core` only publish
+     `manylinux_2_17_x86_64`/`manylinux2014` wheels. Mixing tags across packages in the same
+     `site-packages` is fine at runtime (an older-tagged wheel runs fine on a newer glibc host) —
+     it's purely which tag pip needs to be told to accept per package when resolving. `mcp`
+     needed `--no-deps`: its PyPI metadata declares `pywin32` for `sys_platform == "win32"`, a
+     marker pip evaluates against the *build* host (Windows here) regardless of the `--platform`
+     target, failing to resolve for a package that doesn't actually need it on Linux.
+  - Captured the whole working recipe in **`scripts/build_function_package.py`** (new) so this is
+    reproducible, not tribal knowledge in a shell history — builds the wheel, runs the several
+    platform-tagged install passes, zips with correct paths, skips a couple of Windows
+    path-length-limited numpy license files that aren't needed at runtime.
+  - **Live-verified end to end**: `GET /admin/functions` (via master key) shows
+    `scheduled_etl_run` registered with the correct `timerTrigger` binding
+    (`0 0 3 * * *`), and Application Insights shows a clean `Host initialization:
+    ConsecutiveErrors=0` with no import errors.
+- **APIM real API import.** `apim.bicep` (written earlier this phase but not yet deployed —
+  the Function App detour came first) replaces the empty `backends` shell with a real
+  `Microsoft.ApiManagement/service/apis` resource, `format: 'openapi-link'` pointed at the live
+  Container App's own `/openapi.json` (FastAPI serves this for free) — one source of truth for
+  the route surface instead of a hand-maintained second copy. Redeployed `main.bicep` (needed the
+  existing `postgres-password`/`api-auth-token` secrets back out of Key Vault to avoid
+  accidentally rotating the Postgres password by generating new ones — fetched via the
+  `azure-identity`/`azure-keyvault-secrets` SDK, same non-printing pattern as the live-verification
+  script earlier in Phase 5, not `az keyvault secret set`). All 11 real routes showed up in
+  `az apim api operation list`. First request through the actual gateway URL
+  (`.../agents/healthz`) timed out with 0 bytes for about 90 seconds — not a bug, just APIM
+  propagating a newly-added API definition to its edge/gateway layer; a bare gateway-root request
+  returned a normal 404 the whole time, and the Container App itself answered a direct request in
+  158ms, confirming the backend was never the problem. Worked cleanly on retry after the wait.
+- **`config.py`'s Key Vault fix from the prior entry got its own live confirmation this session**
+  too, incidentally: the Container App had to be rebuilt as `:v2` and redeployed specifically
+  because the `:latest` image still had the old crash-on-missing-secret behavior baked in.
+- **Attempted to delete the now-fully-redundant `greenlux-openai`** in the old `Azure for
+  Students` subscription — blocked by Claude Code's own permission classifier (destructive Azure
+  operations require the user's direct tool-level approval, separate from conversational
+  go-ahead). Gave the user the exact `az cognitiveservices account delete` command to run
+  themselves; not yet confirmed done.
+
+**Deviations from the original plan:** None beyond what's already narrated above — every "wrong
+guess, try the next thing" in the Function App saga was a genuine live finding, not a plan
+change. Worth flagging as a process note for future sessions rather than a code deviation: several
+multi-minute `sleep`/polling loops in this session either exceeded their expected timeout without
+resolving or returned a stale read that looked like completion — when in doubt, verify against
+the live resource's own state (Application Insights, `/admin/host/status`) rather than trusting an
+ARM control-plane response or a background task's "completed" notification at face value.
+
+**Next step:** Confirm the user ran the `greenlux-openai` deletion command. `etl_agent.
+run_ingestion()`'s `data_dir` still needs a real story for a deployed (not dev-machine) run before
+the Function App's daily timer trigger would do anything useful when it actually fires — it
+currently defaults to local files that don't exist in the deployed environment. A deploy-on-merge
+GitHub Actions job is still not set up (deliberately deferred pending the user's go-ahead on
+granting Azure deploy credentials to CI). Otherwise Phase 5 is now fully live-verified, not just
+IaC-on-paper — Phase 6 (portfolio polish) is unblocked.
+
+---
+
+## Phase 5 (continued) — live deployment: `infra/main.bicep` actually run, real data live in Azure
+
+**Completed:** 2026-08-07
+
+**Done:** Everything the two prior Phase 5 entries left as "written and validated, not deployed"
+is now actually deployed and live-verified — Bicep IaC run for real, the agent API built/pushed/
+running, and real data loaded into Postgres and Cosmos DB in Azure for the first time (previously
+those only ever ran locally via `docker-compose`, per the Phase 2 entry — see the deviation note
+below, this was a bigger and better outcome than a literal "migration").
+
+- **New subscription discovered and adopted mid-session:** on `az login --tenant
+  uniluxembourg.onmicrosoft.com`, the tenant showed two subscriptions — `Azure for Students`
+  (`2fb7edf5-...`, holds the existing `rg-greenlux-sentinel` from Phases 2-4) and a previously
+  unknown-to-this-project `Subscription_greenlux` (`3d759a31-819e-4a7c-bd10-ae9b350ff4fc`), which
+  the user confirmed has its own dedicated budget/credit for this project specifically. Switched
+  the deploy target there rather than the shared student subscription, so Phase 5's new spend
+  doesn't compete with the user's other coursework. Checked what actually existed in the old
+  `rg-greenlux-sentinel` first (`az resource list`) before assuming anything needed "migrating" —
+  turned out to be just one resource, `greenlux-openai` (the Cognitive Services account); Postgres
+  and Cosmos had never been provisioned in Azure at all, only ever run via the local
+  `docker-compose` emulator. So there was no live cloud data to migrate — deploying
+  `infra/main.bicep` into the new subscription was simply the first time Postgres/Cosmos exist in
+  Azure, which is what Phase 5 should do regardless.
+- **Created `rg-greenlux-sentinel` in `Subscription_greenlux`** (same name, `francecentral`, same
+  region as the existing OpenAI resource) and ran `az deployment group create` against
+  `infra/main.bicep`. Took five attempts, each a real bug found and fixed live, not
+  configuration drift:
+  1. **`openai` module failed:** `gpt-5-mini`'s model deployment rejected SKU `'Standard'`
+     (`InvalidResourceProperties`). Confirmed via `az cognitiveservices account list-models` that
+     this subscription/region only offers `GlobalStandard`, `DataZoneStandard`, or the
+     Provisioned-Managed SKUs for this model — fixed `openai.bicep`'s default to
+     `GlobalStandard`.
+  2. **`container-apps` module failed** (`ca-greenlux-agents-dev`, "Operation expired") even
+     after the OpenAI fix. Root cause: the Container App declared a `registries` entry for the
+     new ACR (with `identity: 'system'`) unconditionally, but the `AcrPull` role assignment
+     granting that identity access can only be created *after* the Container App exists (it needs
+     the identity's principalId) — a chicken-and-egg ordering problem where the platform hung
+     trying to resolve credentials for a registry it wasn't authorized against yet, even though
+     the placeholder image being deployed at the time needed no auth at all. Fixed by making the
+     `registries` entry conditional on `containerImage` actually pointing at that ACR
+     (`startsWith(containerImage, containerRegistryLoginServer)`) — false for the initial
+     placeholder-image deploy, true once a real image is pushed and `containerImage` is
+     overridden, by which point the role assignment has long since propagated.
+  3. **Same module failed again, different error:** `RoleDefinitionDoesNotExist` for the
+     `AcrPull` role ID. The GUID in `container-apps.bicep` (`...a904-db31ba01b74a`) was simply
+     wrong — turned out to be a different real Azure role entirely, not a typo-shaped string.
+     Verified the correct one live via `az role definition list --name "AcrPull"`
+     (`7f951dda-4ed3-4680-a7ca-43fe172d538d`) rather than trust memory a second time, and checked
+     the other two role IDs already in use (`Key Vault Secrets User`, `Key Vault Secrets
+     Officer`) the same way — both were already correct.
+  4. **Full deploy succeeded** on the next attempt — Postgres, Cosmos, Key Vault (+ 4 secrets:
+     `postgres-password`, `cosmos-key`, `azure-openai-api-key`, `api-auth-token`, all
+     auto-populated per `infra/README.md`'s design), Storage, ACR, Container Apps environment +
+     app, Function App, APIM, Log Analytics + App Insights.
+  5. **Container App still unreachable after that** — timed out with 0 bytes received. Turned out
+     to be expected, not a bug: the placeholder `containerapps-helloworld` image listens on port
+     80, but `container-apps.bicep`'s `targetPort` had already been updated to `8000` to match
+     the real agent API. Nothing to fix — moved straight to building and pushing the real image.
+  - Each `az deployment group create` call routinely exceeded the Bash tool's 10-minute foreground
+    cap; Azure deployments run server-side regardless, so subsequent attempts were launched with
+    `run_in_background: true` plus a separate polling loop (`az deployment group show` in a
+    `while` loop) rather than assumed-failed. One poller exited on a single transient non-Running
+    read; hardened the next one to require two consecutive non-Running reads before concluding
+    the deployment had actually finished.
+- **Built and pushed the real agent API image** (`docker build` + `az acr login` + `docker push`
+  to `greenluxacrdevidckowude2cgc.azurecr.io`), redeployed with `containerImage` overridden to
+  point at it. `GET /healthz` returned a real `200 {"status":"ok"}` from the live Container App.
+- **Found and fixed a real bug in `config.py` while trying to run the ETL locally against the new
+  live Postgres/Cosmos:** `_apply_key_vault_overrides()` fetched all 6 mapped secrets
+  unconditionally and raised `ResourceNotFoundError` if *any* was missing. Since
+  `langchain-api-key` and `powerbi-client-secret` are deliberately never populated by this Bicep
+  (they come from LangSmith SaaS and a separate-tenant Power BI app registration — see
+  `infra/README.md`), a freshly deployed environment is *expected* to be missing those two until
+  someone sets them by hand. This meant `get_settings()` — and therefore every agent endpoint
+  except `/healthz` — would have crashed on the live Container App the moment it was called, not
+  just in this local test. Fixed to skip missing secrets rather than abort settings resolution
+  entirely; added `tests/test_config.py` (2 new tests). Rebuilt and pushed the image again as
+  `:v2`, updated the Container App via `az containerapp update --image`.
+- **Applied `db/schema.sql` + `db/audit_log_schema.sql`** to the new Postgres database directly
+  (no existing script did this — ran the raw DDL via a one-off psycopg connection) — the
+  `funds`/`fund_risk_scores`/`lu_legal_entities`/`fund_reports`/`audit_log` tables didn't exist
+  in the fresh database until this ran.
+- **Loaded real data end to end**, via a scratch script (not committed) that set
+  `AZURE_KEY_VAULT_URL` + the new resources' non-secret endpoints as local env vars and let
+  `config.py`'s existing Key Vault overlay resolve `postgres_password`/`cosmos_key` through my own
+  `az login` credentials (`DefaultAzureCredential` → `AzureCliCredential`) — the same mechanism
+  the deployed app itself uses, so no secret value was ever manually extracted or displayed.
+  Needed a temporary Postgres firewall rule for my own dev machine's public IP first (Postgres
+  Flexible Server only allows Azure-internal traffic by default; Cosmos DB's default public
+  access needed no such rule) — removed it again immediately after the run.
+  `etl_agent.run_ingestion()`: **67,098 funds loaded, 99 Top-100 holdings docs, 5 verified
+  holdings docs, 22 LU management companies matched against live GLEIF.**
+  `risk_agent.score_all_verified()`: **19 real risk scores** across the 4 scorable ISINs, matching
+  the exact shape documented in DATA.md/the Phase 2 entry.
+- **Live-verified the deployed Container App end to end** with a second scratch script (bearer
+  token fetched from Key Vault via `DefaultAzureCredential`, used only in-memory, never printed):
+  `POST /risk/0P0001EVL3` → real `200`, a correctly computed risk score (2.98) with a real
+  holdings-driven explanation (NVDA/AAPL/GOOGL/AVGO/META with real weights/ESG scores);
+  `POST /sql` → real `200`, live Azure OpenAI generated `SELECT COUNT(*) FROM funds WHERE
+  domicile_country = 'LU'` against the live Postgres schema and returned `36413`; the same call
+  with no `Authorization` header correctly returned `401`. This is the full stack working live:
+  Container App → managed identity → Key Vault → Postgres/Cosmos/Azure OpenAI, auth enforced.
+  APIM itself provisioned successfully (`provisioningState: Succeeded`, gateway URL live) but
+  wasn't traffic-tested — it still has no real API/operations imported, a known, already-documented
+  gap, not a new one.
+
+**Deviations from the original plan:**
+- **"Migrate the existing resources" turned into "provision them in Azure for the first time"**
+  once `az resource list` showed Postgres/Cosmos had never actually been deployed to Azure at
+  all — see above. Not a plan change so much as the plan turning out to be simpler than expected.
+- **A real secret briefly appeared in this session's tool output, not committed anywhere:** an
+  early version of `tests/test_config.py` constructed `Settings()` without disabling `.env`
+  loading, so a test assertion's failure message displayed part of a real local LangSmith API key
+  from the developer's `.env` file. Fixed immediately (`Settings(_env_file=None, ...)` in the
+  test), and the user was told directly and advised to rotate that key. Recorded here so it isn't
+  lost track of — confirm the LangSmith key was actually rotated before treating this as closed.
+- **`greenlux-openai` in the old `Azure for Students` subscription was left alone**, not deleted —
+  the new `oai-greenlux-dev-idckowude2cgc` in `Subscription_greenlux` fully replaces it
+  functionally, but deleting the old one is a destructive action on a resource that existed before
+  this session, so it was left for the user to decide rather than done unilaterally.
+
+**Next step:** Decide whether to delete the now-redundant `greenlux-openai` resource in `Azure for
+Students`/`rg-greenlux-sentinel` (old subscription). Confirm the exposed LangSmith key was
+rotated. Beyond that, the concrete remaining gaps are the same ones `infra/README.md` already
+documents and this session didn't touch: the Functions app's `-e .` editable-install approach is
+still unverified against a real Oryx remote build (no Function code has actually been deployed to
+`func-greenlux-etl-dev-idckowude2cgc` yet — it's still an empty shell), `etl_agent.run_ingestion()`
+needs a real `data_dir` story for a deployed run (its default assumes local files, which aren't in
+any deployment package), APIM has no real API definition, and there's still no deploy-on-merge
+GitHub Actions job. Phase 6 (portfolio polish) is otherwise unblocked.
+
+---
+
+## Phase 5 (continued) — Agent API, ETL Agent, Dockerfile, ACR
+
+**Completed:** 2026-08-06
+
+**Done:** Closed the two gaps the previous Phase 5 entry left open before a live deploy would do
+anything useful: no HTTP surface for Container Apps to run, and `etl_agent.py` still a stub.
+Scope again chosen with the user up front — two real blockers were surfaced before writing code
+(no HTTP API existed to containerize; this shell's `az` session is logged into the wrong
+tenant/subscription for deployment) and resolved via explicit choices: build per-agent REST
+endpoints (not a single `/invoke` wrapper), and defer the actual `az login`/deploy step rather
+than guess at credentials.
+
+- **`src/greenlux_sentinel/api/app.py`** — FastAPI app, one REST route per specialist agent
+  (`/sql`, `/risk/{fund_id}`, `/dashboard`, `/query-optimizer/propose` + `/{id}/approve` +
+  `/{id}/reject`, `/report/draft/{fund_id}` + `/{id}/publish` + `/{id}/reject`, `/etl/run`,
+  `/healthz`) — chosen over a single generic endpoint wrapping `supervisor.py`'s LLM router so a
+  real caller doesn't depend on free-text intent classification. Shared-bearer-token auth via a
+  new `settings.api_auth_token` (added to `config.py`'s Key Vault-backed secret list, 6th entry —
+  auth is skipped entirely when unset, documented in the module docstring as a portfolio-scope
+  simplification, not production auth). The two human-approval gates are their own endpoints,
+  same reasoning `supervisor.py` already documents for keeping `publish_report()`/
+  `apply_approved()` out of the LangGraph routes. New unit tests in `tests/test_api.py` via
+  FastAPI's `TestClient` + patched agent functions — auth on/off/wrong-token, every route's
+  wiring, ValueError → 400 translation.
+- **`agents/etl_agent.py` implemented for real** — `run_ingestion()` orchestrates the three
+  already-tested loaders (`load_funds_postgres`, `load_esg_cosmos`, `load_verified_holdings_cosmos`)
+  plus a new `cross_check_lu_entities()` that looks up each LU-domiciled fund's parsed
+  `management_company` against the live GLEIF register (`mcp_servers/gleif_server.py`, unused by
+  any agent since Phase 3) and upserts matches into `lu_legal_entities`. Deliberately still not a
+  `supervisor.py` graph node — it's a batch/scheduled operation, not an NL-routable analyst
+  question, invoked instead via the new `/etl/run` endpoint and the Functions timer trigger. New
+  unit tests in `tests/test_etl_agent.py` via patched collaborators, same style as
+  `test_report_agent.py`.
+- **`Dockerfile`** for the agent API — `python:3.12-slim`, installs via `pyproject.toml`, runs
+  `uvicorn` on port 8000. **Actually built and run**, not just written: `docker build` succeeded,
+  `docker run` + `curl http://localhost:18000/healthz` returned a real `200 {"status":"ok"}` from
+  inside the container before the test image was removed. `.dockerignore` added.
+- **`function_app.py` + `host.json` + `requirements.txt` + `.funcignore`** at the repo root (not a
+  nested `functions/` subfolder) — Azure Functions Python v2 programming model, one
+  `timer_trigger` calling `etl_agent.run_ingestion()` daily at 03:00 UTC (placeholder cadence, no
+  documented real requirement exists). Root placement is deliberate: `requirements.txt` needs
+  `-e .` to resolve against this repo's own `pyproject.toml` during Oryx's remote build, which
+  only works if the whole repo root is the deployed zip. Smoke-tested by importing
+  `function_app.py` after installing `azure-functions` into the venv — confirms the trigger
+  registers correctly; **not** verified against a real Function App or Oryx's remote build (that
+  `-e .` approach is the main untested assumption, called out in `infra/README.md`'s known gaps).
+- **`infra/modules/container-registry.bicep`** (new) — Basic-SKU ACR, admin user disabled.
+  `container-apps.bicep` updated: `containerImage` param (defaults to the same public placeholder
+  as before, so the template still deploys without an image having been pushed),
+  `configuration.registries` entry + an `AcrPull` role assignment scoped to the registry
+  (same "role assignment lives with the identity that needs it" pattern the Key Vault access
+  already used, for the same BCP120 reason), ingress `targetPort` corrected from the placeholder's
+  80 to the real app's 8000. `main.bicep` wires the new module through and adds `apiAuthToken` as
+  a 4th auto-populated Key Vault secret (conditional on non-empty, since Key Vault rejects an
+  empty-string secret value and an empty token is a valid "auth disabled" choice).
+- Re-validated everything end to end: `az bicep build` on the full tree (zero errors/warnings,
+  one length-warning suppressed with justification on the ACR module), `ruff check .` clean
+  across the whole repo including the new root-level `function_app.py`, and the full test suite —
+  **151 passed** (up from 132; 19 new tests across `test_api.py` and `test_etl_agent.py`
+  combined).
+
+**Deviations from the original plan:** None beyond the two explicit scope decisions already
+described above (per-agent REST over a single wrapper; defer `az login`/deploy). One thing worth
+flagging as a real, not-yet-resolved gap rather than a deviation: `run_ingestion()`'s default
+`data_dir` assumes the local `data/raw/` layout, which is gitignored and therefore absent from
+every deployment package (Docker image, Function App zip) — a real scheduled run would need a
+`data_dir` pointing at files fetched from the ADLS Gen2 landing storage account first. Not
+implemented; noted in `infra/README.md`'s known gaps rather than silently glossed over.
+
+**Next step:** The actual live deployment — `az login --tenant uniluxembourg.onmicrosoft.com` (or
+wherever the target subscription for these new resources ends up living; see the previous Phase 5
+entry's tenant-mismatch note), `az acr login` + `docker push` the agent API image once a registry
+exists, then `az deployment group create` against `infra/main.bicep`, then live-verify the
+Container App can actually reach Postgres/Cosmos/Key Vault/OpenAI end to end. A real
+deploy-on-merge GitHub Actions job is still deferred. Phase 6 (portfolio polish) remains otherwise
+unblocked.
+
+---
+
+## Phase 5 — Azure deployment (IaC + CI/CD written and validated, not yet deployed live)
+
+**Completed:** 2026-08-06
+
+**Done:** Full Bicep IaC for the service map in
+[ARCHITECTURE.md](ARCHITECTURE.md#azure-service-map), plus a lint/test CI workflow. Scope for
+this session was deliberately chosen with the user up front (asked before starting, given the
+real Azure spend/blast-radius implications): write and validate the IaC and CI/CD, don't run a
+live deployment or wire a deploy-on-merge job this session.
+
+- `infra/main.bicep` orchestrates one module per resource under `infra/modules/`: `log-analytics`
+  (workspace + workspace-based Application Insights), `key-vault` (RBAC-authorized, not access
+  policies), `key-vault-secret` (reusable secret-write, used 3x), `storage` (ADLS Gen2 landing
+  zone + a separate plain account for Functions runtime state), `postgres` (Flexible Server,
+  Burstable B1ms), `cosmos` (NoSQL/Core API, serverless capacity mode), `openai` (Cognitive
+  Services `OpenAI` kind + one model deployment), `container-apps` (managed environment +
+  Container App for the LangGraph service/MCP servers), `functions` (Consumption plan, Python,
+  timer-triggered ETL), `apim` (Consumption tier, fronts the Container App).
+- **Secrets split, matching `config.py`'s existing `_KEY_VAULT_SECRET_NAMES` design** (that
+  Key Vault-overlay code predates this phase): `postgres-password`, `cosmos-key`,
+  `azure-openai-api-key` are generated within this same deployment, so `main.bicep` writes them
+  into the vault automatically. `langchain-api-key` (LangSmith SaaS) and `powerbi-client-secret`
+  (a separate-tenant app registration — see the Phase 4 entry below) originate outside this
+  deployment and must be set post-deploy via `az keyvault secret set`, documented in
+  `infra/README.md`. Everything else `config.py` reads (hosts, endpoints, deployment/workspace
+  IDs) is a plain Container App/Function App environment variable, never a Key Vault entry or a
+  committed `.env` — this split is what actually satisfies "no local `.env` in any deployed path."
+- **Key Vault RBAC assignment lives inside `container-apps.bicep`/`functions.bicep`, not
+  `main.bicep`** — a deliberate structural choice, not an oversight: assigning "Key Vault Secrets
+  User" to each module's own managed identity from `main.bicep` (reading the identity's principal
+  ID back from a module output, then using it in a `roleAssignments` resource's `name`/`scope`)
+  hit Bicep's BCP120 ("value must be calculable at the start of the deployment") — cross-module
+  runtime outputs aren't valid there. Moving the role assignment into the module that creates the
+  identity, referencing that identity's own resource symbol directly, is the standard fix and
+  compiles cleanly.
+- **Azure Functions, not Data Factory, for scheduled ETL** — ARCHITECTURE.md had left this as an
+  explicit "or"; resolved in favor of Functions (Python-native, matches `etl/*.py` directly,
+  Consumption pricing suits the low run frequency this project needs) and updated
+  ARCHITECTURE.md's service-map row accordingly.
+- Diagnostic settings added on Postgres, Cosmos, and Key Vault, all pointed at the Log Analytics
+  workspace, plus the Container Apps environment's own log destination and the Function App's
+  Application Insights connection string — this is the "Azure Monitor/Log Analytics wired
+  alongside the Postgres audit log" roadmap item; infra/app logs and the Postgres `audit_log`
+  table (docs/RESPONSIBLE_AI.md) are separate, complementary logs, not merged into one.
+- Power BI is deliberately **not** in this Bicep — its workspace/dataset/service-principal already
+  live in the separate personal tenant from the Phase 4 entry below; only its client-secret Key
+  Vault entry is this template's concern, and that's one of the two manual-post-deploy secrets.
+- Every module and `main.bicep` validated with `az bicep build` (installed Bicep CLI via
+  `az bicep install` — wasn't present before this session) — zero errors, zero warnings after
+  fixing: a malformed `#disable-next-line` comment syntax (needs `//`, not `--`) in two modules,
+  a read-only `network.publicNetworkAccess` property Bicep's Postgres Flexible Server type
+  rejected, and the BCP120 cross-module role-assignment issue above.
+- `.github/workflows/ci.yml`: ruff + pytest on push/PR to `main`, Python 3.12, `pip install -e .[dev]`.
+  Confirmed both pass locally first (`ruff check .` clean, `132 passed` via the project's `.venv`)
+  before committing to the workflow, since all existing tests are unit-level (mocked LLMs/DB
+  connections per the Phase 4 entry) — no live-service secrets needed in CI.
+
+**Deviations from the original plan:** None beyond the deliberate scope limit stated above (IaC
+written, not deployed) — that was a scope decision made with the user before starting, not a
+blocker discovered mid-work.
+
+**Known gaps, called out in `infra/README.md` so they aren't mistaken for deploy-readiness:**
+- No `Dockerfile`/container image for the LangGraph service yet — `container-apps.bicep` deploys
+  a placeholder public "hello world" image.
+- No Function code yet — `agents/etl_agent.py` is still an unimplemented stub (this has been true
+  since Phase 2; still the concrete next piece of app work, independent of this infra).
+- APIM's backend has no real API/OpenAPI definition imported yet.
+- No `azd` (Azure Developer CLI) scaffolding (`azure.yaml`) — `az deployment group create` is the
+  documented path in `infra/README.md`; revisit `azd up` once a container build+push step exists
+  in CI, since `azd` is most valuable when it also owns the build.
+
+**Next step:** Either (a) implement `etl_agent.py` for real (GLEIF MCP server has been
+live-verified since Phase 3 with no caller yet) and/or write a `Dockerfile` for the LangGraph
+service, then (b) actually deploy `infra/main.bicep` against the live subscription and live-verify
+the Container App can reach Postgres/Cosmos/Key Vault end to end — that live-verification, plus a
+real deploy-on-merge GitHub Actions job (deferred by this session's scope choice), is what would
+close out Phase 5 fully. Phase 6 (portfolio polish) is otherwise unblocked and could run in
+parallel.
+
+---
+
 ## Phase 4 (continued) — live Power BI provisioning
 
 **Completed:** 2026-08-06

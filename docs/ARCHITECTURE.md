@@ -41,6 +41,31 @@ expose raw query execution without validation.
 - **`powerbi_server`** — tools: `run_dax_query(dataset_id, dax)`, `refresh_dataset(dataset_id)`
 - **`gleif_server`** — tools: `lookup_lei(name_or_lei)`, `search_lu_entities(entity_type)`
 
+## Agent API
+
+`src/greenlux_sentinel/api/app.py` — the HTTP surface Container Apps hosts and API Management
+fronts. One REST route per specialist agent (not a single endpoint wrapping `supervisor.py`'s LLM
+router): a direct caller should be able to hit a specific agent without depending on free-text
+intent classification. Auth is a single shared bearer token (`api_auth_token` — empty/unset means
+auth is skipped, the local-dev default); there's no per-caller identity or scoping beyond that —
+a documented portfolio-scope simplification, not a production auth design.
+
+| Route | Agent call |
+|---|---|
+| `POST /sql` | `sql_agent.ask(question)` |
+| `POST /risk/{fund_id}` | `risk_agent.score_fund(fund_id)` |
+| `POST /dashboard` | `dashboard_agent.update_dashboard(question)` |
+| `POST /query-optimizer/propose` | `query_optimizer_agent.propose_index(sql)` |
+| `POST /query-optimizer/{id}/approve`, `/reject` | the query-optimizer human-approval gate |
+| `POST /report/draft/{fund_id}` | `report_agent.draft_report(fund_id)` |
+| `POST /report/{id}/publish`, `/reject` | the report human-approval gate |
+| `POST /etl/run` | `etl_agent.run_ingestion()` (also runs on `function_app.py`'s daily timer trigger) |
+| `GET /healthz` | unauthenticated liveness/readiness probe |
+
+The two human-in-the-loop gates (docs/RESPONSIBLE_AI.md#human-in-the-loop-gates) are their own
+endpoints, not folded into the propose/draft response — a human decision has to be an explicit,
+separate call.
+
 ## Data layer
 
 See [DATA.md](DATA.md) for the full dataset breakdown. In short:
@@ -58,9 +83,10 @@ See [DATA.md](DATA.md) for the full dataset breakdown. In short:
 | Azure Database for PostgreSQL Flexible Server | Relational fund data + audit log |
 | Azure Cosmos DB (NoSQL API) | ESG holdings documents |
 | Azure Blob Storage / ADLS Gen2 | Raw Kaggle files, landing zone before ETL |
-| Azure Data Factory or Azure Functions (timer-triggered) | Scheduled ETL orchestration |
+| Azure Functions (Consumption, Python, timer-triggered) | Scheduled ETL orchestration — resolved in favor of Functions over Data Factory in Phase 5 (`infra/modules/functions.bicep`): Python-native, matches `etl/*.py` directly with no pipeline-JSON translation layer, and Consumption pricing suits this project's once-a-day/on-demand run cadence |
 | Azure AI Foundry (Azure OpenAI models) | LLM backing all agents |
-| Azure Container Apps | Hosts the LangGraph service + MCP servers |
+| Azure Container Registry | Hosts the built agent API image (`Dockerfile`) that Container Apps pulls, passwordless via managed identity |
+| Azure Container Apps | Hosts the agent API (`api/app.py`) |
 | Azure API Management | Fronts the agent API |
 | Azure Key Vault | Secrets: DB connection strings, API keys, PBI service principal |
 | Azure Monitor + Log Analytics | Infra/app logging, feeds the audit trail alongside LangSmith |

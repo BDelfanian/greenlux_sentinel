@@ -22,6 +22,7 @@ _KEY_VAULT_SECRET_NAMES: dict[str, str] = {
     "azure_openai_api_key": "azure-openai-api-key",
     "langchain_api_key": "langchain-api-key",
     "powerbi_client_secret": "powerbi-client-secret",
+    "api_auth_token": "api-auth-token",
 }
 
 
@@ -59,6 +60,18 @@ class Settings(BaseSettings):
 
     gleif_api_base_url: str = "https://api.gleif.org/api/v1"
 
+    # ADLS Gen2 landing-zone storage account name (not a connection string/key -- access is via
+    # DefaultAzureCredential + the caller's own "Storage Blob Data Reader" role, same
+    # managed-identity pattern as Key Vault). Used by etl_agent.py to fetch the raw Kaggle CSVs
+    # when running somewhere that doesn't have data/raw/ locally (a deployed Function App or
+    # Container App) -- see infra/modules/storage.bicep, infra/modules/functions.bicep.
+    landing_storage_account_name: str = ""
+
+    # Bearer token the agent API (api/app.py) checks incoming requests against. Empty (the local
+    # dev default) means auth is skipped -- see api/app.py's module docstring for why that's an
+    # explicit, documented simplification and not an oversight.
+    api_auth_token: str = ""
+
     azure_key_vault_url: str = ""
 
     @property
@@ -71,17 +84,28 @@ class Settings(BaseSettings):
 
 
 def _apply_key_vault_overrides(settings: Settings) -> Settings:
-    """Overlay Key Vault secret values onto settings resolved from the environment."""
+    """Overlay Key Vault secret values onto settings resolved from the environment.
+
+    Missing secrets are skipped, not fatal: infra/main.bicep deliberately doesn't populate
+    langchain-api-key/powerbi-client-secret (they come from systems it doesn't provision --
+    LangSmith SaaS, a separate-tenant Power BI app registration -- see infra/README.md), so a
+    freshly deployed environment is expected to be missing those two until someone sets them by
+    hand. Failing settings resolution entirely over an optional, not-yet-configured integration
+    would take down every endpoint that touches get_settings(), not just the ones that need it.
+    """
+    from azure.core.exceptions import ResourceNotFoundError
     from azure.identity import DefaultAzureCredential
     from azure.keyvault.secrets import SecretClient
 
     credential = DefaultAzureCredential()
     client = SecretClient(vault_url=settings.azure_key_vault_url, credential=credential)
 
-    overrides = {
-        field: client.get_secret(secret_name).value
-        for field, secret_name in _KEY_VAULT_SECRET_NAMES.items()
-    }
+    overrides = {}
+    for field, secret_name in _KEY_VAULT_SECRET_NAMES.items():
+        try:
+            overrides[field] = client.get_secret(secret_name).value
+        except ResourceNotFoundError:
+            continue
     return settings.model_copy(update=overrides)
 
 
