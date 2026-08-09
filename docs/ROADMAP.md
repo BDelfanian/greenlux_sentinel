@@ -230,9 +230,19 @@ step — see below and docs/PROGRESS_LOG.md's top entry.
       #6 updates), ARCHITECTURE.md's agent graph/MCP servers/API routes/differentiation table,
       DATA.md's new "Document corpus (Phase 8)" section, README.md's differentiation section,
       REQUIREMENTS_TRACEABILITY.md's non-goals (marked superseded, not deleted).
-- [ ] **8e — live Azure deployment.** Azure AI Search + embedding deployment provisioning, real
-      ingestion run, live retrieval-quality verification. Explicitly gated on the user's
-      "ready to deploy" go-ahead, per this session's standing local-only instruction.
+- [x] **8e — live Azure deployment.** Azure AI Search + embedding deployment provisioned, real
+      document ingestion run against the live index (411 chunks), the agent API redeployed with
+      Phase 8 code via the deploy-on-merge CI, one real production bug found and fixed (the
+      `document_citations` table existed locally but was never applied to live Postgres — fixed
+      via Azure Cloud Shell once a direct connection from the local machine proved
+      firewall-blocked), and `/evidence`/multi-hop `/ask` fully live-verified over the public
+      internet, including two independent real SQL-guardrail rejections handled gracefully by the
+      multi-hop dispatcher across separate runs.
+- [x] **Portfolio polish — operator UI live deployment + new demo GIF.** The UI itself had only
+      ever run via `npm run dev` locally; now deployed as a second Container App
+      (`infra/modules/container-apps-ui.bicep`), live-verified over the public internet, with a
+      new demo GIF captured via Playwright against the real live deployment (not staged, not a
+      terminal-transcript workaround). See docs/PROGRESS_LOG.md's top entry.
 
 ## Phase 7 — Operator UI (Next.js)
 

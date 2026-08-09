@@ -13,9 +13,10 @@ Built as a portfolio project targeting the Luxembourg investment-fund industry, 
 SFDR disclosures and marketing materials — see [docs/DATA.md](docs/DATA.md#why-this-topic) for
 sourcing.
 
-> **Status:** Phases 0-7 complete and live-deployed. Phase 8 (document-evidence agent + multi-hop
-> orchestration) is in progress — 8a-8d built and verified locally, 8e (live Azure deployment)
-> pending. See [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
+> **Status:** Phases 0-8 complete and live-deployed, including document-evidence retrieval and
+> multi-hop orchestration (Phase 8) — verified end to end over the public internet, not just
+> locally. The operator UI (`ui/`) is itself live at a public URL (its own Container App), not
+> just runnable locally. See [docs/ROADMAP.md](docs/ROADMAP.md) for the full phase checklist and
 > [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for session-by-session detail.
 
 ## Why this exists
@@ -129,12 +130,17 @@ See [CLAUDE.md](CLAUDE.md#decisions-that-must-not-be-quietly-reverted) decision 
 
 ## Demo
 
-![Agent API demo: calling /healthz and /risk/{fund_id} against the local dev stack, showing a real Greenwashing Risk Score computed from real holdings data](docs/assets/demo.gif)
+![Operator UI demo: a multi-hop question against the live public deployment, combining a fund's Greenwashing Risk Score with what its KIID discloses, planning and chaining SQL/risk/evidence hops automatically, and producing one synthesized, cited answer with real document citations](docs/assets/demo.gif)
 
-Real output from the Agent API (same FastAPI app deployed on Azure Container Apps) running
-against the local Postgres + Cosmos dev stack: a fund claiming a 5/5-globe Morningstar
-Sustainability Rating scores 54.31 (large claim-vs-holdings gap), vs. 2.48 for a plain S&P 500
-tracker with no sustainability claim at all — the core signal this project surfaces.
+A real browser session (Playwright-captured, not staged) against the **live public operator UI**
+(`ca-greenlux-ui-dev`), which itself calls the live public Agent API: a compound question routes
+to the `multi_hop` supervisor path, plans and runs `sql` → `risk` → `evidence` (each with its own
+real success/failure — the plan doesn't assume every hop works), and the Evidence Agent produces
+one final answer citing the fund's actual KIID text via Azure AI Search, retrieved and grounded,
+not generated from memory. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#agent-graph-langgraph)
+for how the multi-hop pipeline works, or [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for the two
+real bugs (an Azure AI Search OData filter, a schema gap on live Postgres) found and fixed while
+getting this working end to end.
 
 ## Deployment
 
@@ -183,8 +189,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#agent-api) for the full route li
 live-deployed Container App directly via its APIM gateway if you have the auth token.
 
 To drive it from a browser instead of curl, with the full agent-level detail (generated query,
-risk explanation, report body, citations) rendered rather than just a JSON blob, run the operator
-UI alongside the Agent API above:
+risk explanation, report body, citations, multi-hop plan/trace) rendered rather than just a JSON
+blob, either use the **live operator UI** — no setup required —
+or run it locally alongside the Agent API above:
+
+> **Live:** https://ca-greenlux-ui-dev.politedesert-1edcbb25.francecentral.azurecontainerapps.io
 
 ```powershell
 cd ui

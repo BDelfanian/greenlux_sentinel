@@ -10,6 +10,67 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Portfolio polish — live operator UI deployment + real demo GIF
+
+**Completed:** 2026-08-09
+
+**Done:**
+- **UI copy updated for Phase 8**: `AskForm.tsx`'s placeholder question and fund_id helper text,
+  `page.tsx`'s header description, and `ui/README.md` all still described only the original five
+  routes — updated to mention `evidence`/`multi_hop`. `ResultView.tsx`/`agent-api.ts` themselves
+  were already correct (done in Phase 8d).
+- **Operator UI deployed live for the first time** — it had only ever been run via `npm run dev`
+  locally since Phase 7. New `ui/Dockerfile` (Next.js standalone output, verified with a local
+  `docker build`+`run` before writing any infra around it) and
+  `infra/modules/container-apps-ui.bicep` — a second Container App in the *same* environment as
+  the agent API, `AGENT_API_URL`/`AGENT_API_TOKEN` supplied at deploy time (the token as a native
+  Container Apps secret, no Key Vault integration needed on the Next.js side).
+  `.github/workflows/deploy.yml` extended to build+push+update it on `ui/**` changes.
+- **Found and fixed a real deploy bug**: the first CI deploy of the UI image failed with `ACR...
+  UNAUTHORIZED`. Root cause: the UI Container App's *first* Bicep deployment necessarily used the
+  placeholder image (no real image existed in ACR yet), so `container-apps-ui.bicep`'s
+  `usesContainerRegistry` conditional evaluated false and never configured the `registries` array
+  — and `az containerapp update --image` (what CI actually runs) only changes the image reference,
+  it never touches `registries`. This is the exact "chicken-and-egg" problem
+  `container-apps.bicep`'s own header comment already documented for the agent API's *original*
+  first deploy — just not yet hit for the UI's. Fixed with one more `az deployment group create`
+  pointing `containerImage` at the real, already-pushed ACR image, which correctly set
+  `registries` this time; every future `ui/**` push deploys cleanly now with no more manual steps.
+- **New Contributor grant** for the GitHub deploy identity on `ca-greenlux-ui-dev` specifically
+  (its RBAC is deliberately scoped resource-by-resource, not resource-group-wide — see
+  `infra/README.md`), added the same ad hoc way as the other three existing grants.
+- **Real, live-verified end to end over the public internet**: a real multipart form POST against
+  `https://ca-greenlux-ui-dev.../` (replicating what a browser's no-JS progressive-enhancement
+  submit sends, same technique as Phase 7's own verification) returned a real `evidence`-routed,
+  correctly cited answer — the live UI calling the live Agent API calling live Azure AI Search and
+  Postgres, nothing mocked anywhere in the path.
+- **New demo GIF, captured from a real browser session against the live public deployment** —
+  not the Phase 6 terminal-transcript workaround (that session had no video/screen-capture tooling
+  at all), and not even a local simulation: Playwright (installed standalone in the scratchpad, not
+  added to `ui/package.json` — a demo-tooling concern, not an app dependency) drove real Chromium
+  against the actual live URL, submitting the exact multi-hop question from this session's own
+  earlier live-verification work (`"Combine this fund's risk score with what its KIID says about
+  business exclusions..."` / `0P00018CYB`). That run happened to get all three hops (`sql`,
+  `risk`, `evidence`) to succeed simultaneously — real, non-deterministic LLM planning behavior,
+  not staged — giving a genuinely representative "everything worked" demo frame. Stitched into an
+  animated GIF via Pillow (4 frames: empty form → filled+submitting → routed/plan appearing → full
+  synthesized answer with real document citations), replacing `docs/assets/demo.gif`.
+  `README.md`'s Demo section, status banner, and Getting-started section updated to match (incl.
+  linking the live UI URL directly, so a reader doesn't need to run anything locally to try it).
+
+**Deviations from the original plan:** none of substance for the UI/demo work itself — the
+ACR chicken-and-egg bug was a real, previously-undocumented-for-this-app instance of an already-
+known pattern, not a new category of problem. One judgment call: captured the demo GIF against the
+*live* deployment rather than local dev, once the live UI was confirmed working — more authentic
+(shows the actual deployed system, not a simulation) and incidentally avoided a Next.js dev-mode
+badge that showed up in an initial local-dev-server capture attempt.
+
+**Next step:** all three of this pass's asks (UI copy, live UI URL, new demo GIF) are done. No
+open items from this session — Phase 8 (8a-8e) and this portfolio-polish pass are both complete
+and live-verified.
+
+---
+
 ## Phase 8e (continued) — committed, deployed, and verified over the public internet
 
 **Completed:** 2026-08-09

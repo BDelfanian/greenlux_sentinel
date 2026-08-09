@@ -18,6 +18,12 @@ distinction matters (it's what keeps this different from the sibling project's a
 app — see CLAUDE.md decision #4's Phase 8 correction for the fuller differentiation story, since
 this project does now retrieve and cite documents too, just not through a chat interface).
 
+## Live
+
+https://ca-greenlux-ui-dev.politedesert-1edcbb25.francecentral.azurecontainerapps.io — its own
+Container App (`infra/modules/container-apps-ui.bicep`), calling the live public Agent API. No
+local setup needed to try it.
+
 ## Running locally
 
 Requires the FastAPI Agent API running separately (see the repo root README's "Getting started"):
@@ -32,6 +38,16 @@ npm run dev                        # http://localhost:3000
 `api_auth_token` set (the local dev API leaves it blank, so auth is skipped — see
 `src/greenlux_sentinel/api/app.py`'s module docstring). It's read server-side only
 (`src/lib/agent-api.ts`), inside Server Actions — never sent to the browser.
+
+## Deployment
+
+`Dockerfile` builds a standalone Next.js image (`output: "standalone"` in `next.config.ts`) —
+`node server.js`, not `next start` (that doesn't work with standalone output). Deployed as a
+second Container App (`infra/modules/container-apps-ui.bicep`) in the same environment as the
+agent API's own, with `AGENT_API_URL`/`AGENT_API_TOKEN` supplied as runtime env vars (the token as
+a native Container Apps secret, not a Key Vault reference — this app has no Python-config-style
+Key Vault reading layer). `.github/workflows/deploy.yml` builds+pushes+updates it on every push to
+`main` touching `ui/**`.
 
 ## Structure
 
