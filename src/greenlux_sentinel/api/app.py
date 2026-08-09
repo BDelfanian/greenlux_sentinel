@@ -38,6 +38,7 @@ from greenlux_sentinel.agents import (
     report_agent,
     risk_agent,
     sql_agent,
+    supervisor,
 )
 from greenlux_sentinel.config import get_settings
 
@@ -65,6 +66,11 @@ def _call(fn: Callable[..., Any], *args: Any) -> Any:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+class AskRequest(BaseModel):
+    question: str
+    fund_id: str | None = None
+
+
 class SqlRequest(BaseModel):
     question: str
 
@@ -85,6 +91,21 @@ class ApprovalRequest(BaseModel):
 def healthz() -> dict[str, str]:
     """Unauthenticated — Container Apps liveness/readiness probe target."""
     return {"status": "ok"}
+
+
+@app.post("/ask", dependencies=[_AUTH])
+def post_ask(body: AskRequest) -> dict[str, Any]:
+    """Single free-text entry point for the operator UI (`ui/`, CLAUDE.md decision #5): LLM-routes
+    the question to one of the five specialist agents via supervisor.build_graph() and returns the
+    route taken alongside its result, so the caller can render route-specific detail (generated
+    SQL/DAX, risk explanation, report body, citations) without knowing in advance which agent
+    would handle it. risk/report routes additionally require fund_id. Errors from the routed agent
+    come back as state["error"] (see supervisor.py's run_*() functions) rather than a 500, so a
+    bad fund_id or unanswerable question is a normal, displayable result. Builds a fresh graph per
+    request rather than caching one, same statelessness convention every other route here follows
+    (each agent function opens its own connections/LLM client per call, see e.g. sql_agent.ask)."""
+    graph = supervisor.build_graph()
+    return graph.invoke({"request": body.question, "fund_id": body.fund_id})
 
 
 @app.post("/etl/run", dependencies=[_AUTH])

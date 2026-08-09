@@ -189,3 +189,35 @@ environment, not just written or deployed without crashing.
 
 All six roadmap phases are now complete — see docs/PROGRESS_LOG.md's top entry for what's left as
 optional, non-blocking follow-up (none of it required for the portfolio deliverable).
+
+## Phase 7 — Operator UI (Next.js)
+
+- [x] CLAUDE.md decision #5 ("no chat frontend") reversed at the user's explicit request —
+      recorded with rationale in CLAUDE.md itself, not silently changed; ARCHITECTURE.md,
+      REQUIREMENTS_TRACEABILITY.md, and README.md's differentiation-from-agentic-rag-lu language
+      updated to match (see docs/PROGRESS_LOG.md for the full reasoning)
+- [x] `/ask` endpoint added to the Agent API (`api/app.py`) — single free-text entry point that
+      routes through `supervisor.build_graph()` and returns the route taken plus its full result;
+      3 new tests in `tests/test_api.py`, all 40 tests (existing + new) pass
+- [x] Next.js 16 / React 19 app scaffolded in `ui/` (App Router, TypeScript, Tailwind 4) — Server
+      Actions call the Agent API server-side only, so `AGENT_API_TOKEN` never reaches the browser
+      bundle
+- [x] Route-specific result rendering for all five specialist agents: SQL (generated query +
+      results table), risk (score + explanation + caveat), dashboard (DAX + results table),
+      query-optimizer (proposed DDL + estimated improvement + human approve/reject gate),
+      report (EN/FR/DE tabs + citations + human publish/reject gate) — plus a raw-JSON panel on
+      every result for full transparency
+- [x] **Live-verified end to end, not just built and assumed to work**: real form submissions
+      (simulated via curl replicating the browser's no-JS progressive-enhancement POST, using the
+      actual Server Action id extracted from the rendered page — not a mock) against the local
+      stack. `sql` route: real Azure-OpenAI-generated query returned live Postgres rows, rendered
+      in the results table. `risk` route: returned the real 53.03 score for `0P00018CYB`
+      (iShares MSCI USA SRI UCITS ETF), rendered in the score view. `report` route: correctly
+      classified and ran, and its real `tool_sourced_numbers` guardrail rejection (the LLM draft
+      didn't pass the retry) surfaced as a clean error in the UI instead of crashing — proving the
+      guardrail and the error-display path both work, not just the happy path.
+
+**Deviation:** Node.js wasn't installed in this dev environment. `winget install OpenJS.NodeJS.LTS`
+hung indefinitely waiting for an interactive UAC elevation prompt this non-interactive session
+can't answer, so a portable (installer-free) Node.js zip was downloaded and extracted to
+`C:\tools\node-v24.19.0-win-x64` and added to the user `PATH` instead — see docs/PROGRESS_LOG.md.

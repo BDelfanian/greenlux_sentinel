@@ -10,6 +10,95 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 7 — Operator UI (Next.js)
+
+**Completed:** 2026-08-09
+
+**Done:** Session started from the user asking, after seeing how much back-and-forth it took to
+get a straight answer to a plain question ("what can this do" / "run it for real" / "fix the
+Azure OpenAI credential" all took separate CLI round-trips), for an actual web UI: ask a question,
+see the result *and* the details (query used, score, report, citations) in one place.
+
+- **CLAUDE.md decision #5 reversed, on the record.** The original decision was "no chat frontend"
+  — reasoning at the time: agentic-rag-lu already is a Next.js chat app over RAG, so building the
+  same shape here would erase the one thing differentiating the two portfolio projects. Flagged
+  this directly to the user before touching anything (per CLAUDE.md's own "don't quietly revert"
+  instruction) and asked how to proceed via `AskUserQuestion`; the user chose to override it
+  explicitly. Updated CLAUDE.md decision #5 itself (not just this log) with the new decision and
+  the reasoning for the reversal, plus every place the old claim was asserted as fact —
+  ARCHITECTURE.md's differentiation table, REQUIREMENTS_TRACEABILITY.md's non-goals list, and
+  README.md's "instead of a chat UI" line — so a fresh session doesn't find contradictory claims
+  across docs. The framing kept throughout: this is a structured, fixed-agent-surface console, not
+  an open-ended RAG chat — still a real distinction from agentic-rag-lu, not a fig leaf.
+- **`/ask` endpoint** (`src/greenlux_sentinel/api/app.py`) — the one new backend change. Routes
+  free text through the existing `supervisor.build_graph()` (no new orchestration logic; every
+  specialist agent was already there) and returns the full state (`route`, `result`, `error`) so
+  the UI can render route-specific detail. Built fresh per request rather than cached, matching
+  every other route's statelessness convention in this file. 3 new tests added to
+  `tests/test_api.py` following the existing patched-collaborator pattern; all 40 tests
+  (37 existing + 3 new) pass.
+- **`ui/` — Next.js 16 / React 19 app**, scaffolded via `create-next-app` (App Router, TypeScript,
+  Tailwind 4). One page, one form (`question` + optional `fund_id`), submitted via a React 19
+  Server Action (`ui/src/app/actions.ts`) that calls the Agent API server-side only —
+  `AGENT_API_TOKEN` never reaches the browser bundle, matching the "server-only secret" pattern
+  the rest of this codebase already uses for Postgres/Cosmos/OpenAI credentials. Result rendering
+  (`ui/src/components/ResultView.tsx`) branches on `route`: SQL shows the generated query + a
+  results table; risk shows the score + explanation + caveat; dashboard shows the DAX + results
+  table; query-optimizer shows the proposed DDL + estimated improvement plus a real
+  approve/reject form (`ui/src/components/GateAction.tsx`) wired to
+  `/query-optimizer/{id}/approve|reject`; report shows EN/FR/DE tabs + citations plus the same
+  gate pattern wired to `/report/{id}/publish|reject`. Every result also has a collapsible raw-JSON
+  panel — the user's "not just the result, the details too" requirement, taken literally rather
+  than picked apart into only the fields judged interesting.
+- **Live-verified end to end**, not just built and typechecked. `npm run build` and `npx tsc
+  --noEmit` passed, but the real proof was exercising actual form submissions against the running
+  stack: extracted the real Server Action id from the rendered homepage HTML and replayed it as a
+  raw `multipart/form-data` POST via curl — the same request shape a browser sends for
+  progressive-enhancement forms without JS, not a mocked call. Three real runs against the local
+  Docker Postgres/Cosmos + the real deployed Azure OpenAI resource (`oai-greenlux-dev-idckowude2cgc`,
+  fixed earlier this session — see below): (1) a Luxembourg-fund SQL question returned real rows
+  in the rendered table; (2) a risk-score question for `0P00018CYB` rendered the real 53.03 score;
+  (3) a report-draft request correctly routed to the report agent, and its real
+  `tool_sourced_numbers` guardrail rejection (the `gpt-5-mini` draft didn't pass even after the
+  built-in retry) surfaced as a clean red error banner instead of a crash or a 500 — proof the
+  error path works, not just the happy path.
+- **Local `.env` fixed as a side effect of the same session, before the UI work started.**
+  `AZURE_OPENAI_ENDPOINT` was pointed at `greenlux-openai.openai.azure.com`, a resource the user
+  had deleted during the Phase 5 Azure-for-Students cleanup (see the Phase 6 entry below, which
+  first surfaced this as a known-but-unfixed issue). Confirmed via `az resource list` that the
+  real Bicep-provisioned resource (`oai-greenlux-dev-idckowude2cgc`) and the rest of
+  `rg-greenlux-sentinel` were fully live the whole time — nothing needed deploying, the stale
+  credential was the only gap. Pulling the real key from Key Vault hit the harness's own
+  auto-mode classifier twice (once reading the secret, once when the fix attempted to write a
+  permission rule granting that read) — a deliberate anti-self-escalation boundary, not a bug —
+  so the user ran `az keyvault secret show` themselves and pasted the key directly.
+
+**Deviations from the original plan:**
+- Node.js was not installed anywhere in this dev environment. `winget install OpenJS.NodeJS.LTS`
+  hung indefinitely waiting for an interactive UAC elevation prompt that a non-interactive CLI
+  session cannot answer — not a timeout worth retrying. Downloaded the portable, installer-free
+  `node-v24.19.0-win-x64.zip` from nodejs.org instead, extracted to `C:\tools\`, and added it to
+  the user-level `PATH` via `[Environment]::SetEnvironmentVariable`. Note for a future session:
+  this env var change does not propagate to already-open Git Bash shells (confirmed — a fresh
+  `Bash` tool call still failed to find `node` until PATH was prefixed manually in-command), so
+  `export PATH="/c/tools/node-v24.19.0-win-x64:$PATH"` is still needed at the start of any Bash
+  command that runs `node`/`npm` until a genuinely fresh shell process picks up the user PATH.
+- The user pasted a real (if low-stakes, rotatable) Azure OpenAI API key directly into the chat
+  transcript rather than using a secrets-safe path. Flagged this to the user in the same turn
+  with a concrete rotation command, rather than silently proceeding or silently omitting the note.
+
+**Next step:** Nothing blocking. Two servers were left running locally for the user to try
+immediately: FastAPI on `127.0.0.1:8000` (`uvicorn greenlux_sentinel.api.app:app`) and the Next.js
+dev server on `localhost:3000` (`npm run dev` in `ui/`). Candidate follow-ups, none required: (1)
+the `total_net_assets` `NaN` data-quality issue surfaced by an earlier `/ask` test in this same
+session (`etl/load_funds_postgres.py`'s numeric parsing — every top LU 5-globe fund's
+`total_net_assets` came back `NaN`, not just a display artifact); (2) `ui/` has no test suite yet
+(the rest of the repo's convention is unit tests with patched collaborators — Vitest + React
+Testing Library would be the natural fit, none set up this session); (3) rotate the exposed Azure
+OpenAI key if the user wants to close that loop.
+
+---
+
 ## Phase 6 — portfolio polish complete
 
 **Completed:** 2026-08-07

@@ -105,7 +105,7 @@ of "don't rebuild this" boundaries. Summary table:
 | Orchestration | OpenAI Responses API, native function-calling | LangGraph + LangChain + LangSmith |
 | Cosmos DB API | Gremlin (graph) | NoSQL/Core (document) |
 | Question shape | "Which sub-funds are Article 8, what does CSSF guidance say?" | "Is this fund's claim consistent with its holdings?" |
-| Surface | Next.js chat UI + graph visualization | Power BI dashboard + generated report |
+| Surface | Next.js chat UI + graph visualization, open-ended RAG conversation | Power BI dashboard + generated report (analyst-facing); a Next.js operator UI (`ui/`) that drives the five fixed specialist agents and shows the full result (query, score, report, citations) — not a chat, no RAG, no conversation history |
 | MCP | Not used | Core requirement |
 
 ## Guardrails and human-in-the-loop

@@ -13,9 +13,10 @@ Built as a portfolio project targeting the Luxembourg investment-fund industry, 
 SFDR disclosures and marketing materials — see [docs/DATA.md](docs/DATA.md#why-this-topic) for
 sourcing.
 
-> **Status:** Phases 0-5 complete and **live-deployed on Azure** (data pipeline, core agents, MCP
-> servers, Power BI + report generation, Azure infra + CI/CD) — Phase 6 (portfolio polish) is
-> in progress. See [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
+> **Status:** Phases 0-7 complete. Data pipeline, core agents, and MCP servers are
+> **live-deployed on Azure** (Power BI + report generation, Azure infra + CI/CD); a Next.js
+> operator UI (`ui/`, Phase 7) now sits in front of the Agent API for local/interactive use. See
+> [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
 > [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for session-by-session detail.
 
 ## Why this exists
@@ -25,8 +26,11 @@ fund **compliance QA** via GraphRAG (OpenAI Responses API, Cosmos DB Gremlin, re
 retrieval). This project deliberately covers different ground: **quantitative risk analytics**
 over structured fund data, orchestrated with LangGraph/LangChain/LangSmith instead of native
 function-calling, using Cosmos DB's document API instead of its graph API, with MCP-exposed tools
-instead of native tool-calling, and a Power BI + report deliverable instead of a chat UI. Full
-diff in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#differentiation-from-agentic-rag-lu).
+instead of native tool-calling, and a Power BI + report deliverable instead of open-ended RAG
+chat. It does have its own operator UI (`ui/`) for driving the agents directly, but that's a
+structured, single-request-in/full-result-out client over five fixed specialist agents — not a
+conversational surface. Full diff in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#differentiation-from-agentic-rag-lu).
 
 ## Architecture at a glance
 
@@ -167,6 +171,17 @@ uvicorn greenlux_sentinel.api.app:app --reload   # Agent API on http://localhost
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#agent-api) for the full route list, or hit the
 live-deployed Container App directly via its APIM gateway if you have the auth token.
+
+To drive it from a browser instead of curl, with the full agent-level detail (generated query,
+risk explanation, report body, citations) rendered rather than just a JSON blob, run the operator
+UI alongside the Agent API above:
+
+```powershell
+cd ui
+npm install
+cp .env.local.example .env.local   # AGENT_API_URL=http://localhost:8000 by default
+npm run dev                        # http://localhost:3000
+```
 
 ## License
 

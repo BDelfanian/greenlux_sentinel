@@ -140,6 +140,37 @@ class TestRoutes:
         assert response.json() == {"status": "rejected"}
         m.assert_called_once_with("r1", "alice")
 
+    def test_ask_routes_to_sql(self):
+        fake_llm = SimpleNamespace(invoke=lambda messages: SimpleNamespace(content="sql"))
+        with (
+            patch("greenlux_sentinel.agents.supervisor._default_llm", return_value=fake_llm),
+            patch("greenlux_sentinel.agents.sql_agent.ask", return_value={"sql": "SELECT 1", "rows": [{"a": 1}]}),
+        ):
+            response = client.post("/ask", json={"question": "how many funds?"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["route"] == "sql"
+        assert body["result"] == {"sql": "SELECT 1", "rows": [{"a": 1}]}
+
+    def test_ask_routes_to_risk_with_fund_id(self):
+        fake_llm = SimpleNamespace(invoke=lambda messages: SimpleNamespace(content="risk"))
+        with (
+            patch("greenlux_sentinel.agents.supervisor._default_llm", return_value=fake_llm),
+            patch("greenlux_sentinel.agents.risk_agent.score_fund", return_value={"risk_score": 53.03}),
+        ):
+            response = client.post("/ask", json={"question": "what's the risk score?", "fund_id": "F1"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["route"] == "risk"
+        assert body["result"] == {"risk_score": 53.03}
+
+    def test_ask_missing_fund_id_surfaces_as_error_not_500(self):
+        fake_llm = SimpleNamespace(invoke=lambda messages: SimpleNamespace(content="risk"))
+        with patch("greenlux_sentinel.agents.supervisor._default_llm", return_value=fake_llm):
+            response = client.post("/ask", json={"question": "what's the risk score?"})
+        assert response.status_code == 200
+        assert "fund_id" in response.json()["error"]
+
     def test_etl_run(self):
         summary = {"funds_loaded": 12, "top100_holdings_docs": 4, "verified_holdings_docs": 5, "gleif_matched": 3}
         with patch("greenlux_sentinel.agents.etl_agent.run_ingestion", return_value=summary) as m:

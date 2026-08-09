@@ -25,5 +25,8 @@ check scope drift — if an implementation choice can't point to a row here, ask
 
 - No vector search / RAG over regulatory PDF text
 - No knowledge-graph traversal (Cosmos Gremlin) — that's agentic-rag-lu's territory
-- No chat frontend as the primary interface
+- No RAG-style chat as the primary interface — the Phase 7 Next.js operator UI (`ui/`, CLAUDE.md
+  decision #5) is a structured request/response client over the five fixed specialist agents, not
+  an open-ended conversational surface; Power BI + the generated report remain the primary
+  analyst-facing deliverable
 - No literal "SFDR Article" column fabricated in any schema

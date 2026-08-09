@@ -48,9 +48,18 @@ without checking with the user first.
    add a vector store or start ingesting regulatory text corpora here — that would duplicate the
    other project's core mechanism.
 
-5. **No chat frontend.** The primary deliverable surface is the Power BI dashboard and the
-   generated report, not a conversational UI (agentic-rag-lu already has a Next.js chat app).
-   Keep any operator-facing UI minimal (status/audit log viewer at most).
+5. **Operator UI: Next.js app calling the Agent API.** Originally "no chat frontend" (the concern
+   was duplicating agentic-rag-lu's Next.js chat app over RAG). **Correction (Phase 7):** the user
+   explicitly overrode this — direct HTTP calls to the Agent API were too inconvenient for
+   day-to-day use, and asked for a Next.js UI where a question goes in and the full result (route
+   taken, generated SQL/DAX, risk score + explanation, multilingual report, citations, audit
+   trail) comes back on one page. This is still not the same product as agentic-rag-lu: that one
+   answers open-ended questions over regulatory PDF text via RAG + graph traversal; this one is a
+   thin client over the five fixed, schema-constrained specialist agents (sql/risk/dashboard/
+   query_optimizer/report) — no free-form chat history, no RAG, one request in, one structured
+   result out. Lives in `ui/` (see that directory's own notes for the stack). Power BI + the
+   generated report remain the primary *analyst-facing* deliverable; this UI is for
+   driving/inspecting the agents directly, which is a different audience (developer/operator).
 
 6. **Orchestration is LangGraph/LangChain/LangSmith,** not native OpenAI function-calling (which
    agentic-rag-lu uses). This is a hard project requirement, not a style preference.
