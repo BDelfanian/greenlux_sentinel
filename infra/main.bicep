@@ -36,6 +36,9 @@ param apimPublisherEmail string
 @description('Agent API container image (ACR-hosted once built and pushed — see infra/README.md). Defaults to a public placeholder so this template deploys before that image exists.')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+@description('Operator UI (ui/) container image (ACR-hosted once built and pushed). Defaults to a public placeholder so this template deploys before that image exists.')
+param containerUiImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
 var uniqueSuffix = uniqueString(resourceGroup().id)
 
 // --- Observability (created first -- every other module's diagnosticSettings points at it) ---
@@ -230,6 +233,20 @@ module containerApps 'modules/container-apps.bicep' = {
   }
 }
 
+module containerAppsUi 'modules/container-apps-ui.bicep' = {
+  name: 'container-apps-ui'
+  params: {
+    location: location
+    namePrefix: namePrefix
+    environmentName: environmentName
+    containerRegistryName: containerRegistry.outputs.registryName
+    containerRegistryLoginServer: containerRegistry.outputs.loginServer
+    containerImage: containerUiImage
+    agentApiUrl: 'https://${containerApps.outputs.containerAppFqdn}'
+    agentApiToken: apiAuthToken
+  }
+}
+
 module functionApp 'modules/functions.bicep' = {
   name: 'functions'
   params: {
@@ -277,6 +294,7 @@ output cosmosEndpoint string = cosmos.outputs.endpoint
 output openAiEndpoint string = openAi.outputs.endpoint
 output aiSearchEndpoint string = aiSearch.outputs.endpoint
 output containerAppFqdn string = containerApps.outputs.containerAppFqdn
+output containerAppUiFqdn string = containerAppsUi.outputs.containerAppFqdn
 output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
 output functionAppName string = functionApp.outputs.functionAppName
 output apimGatewayUrl string = apim.outputs.gatewayUrl

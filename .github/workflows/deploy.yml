@@ -27,6 +27,7 @@ on:
       - "requirements.txt"
       - "host.json"
       - "scripts/build_function_package.py"
+      - "ui/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch: {}
 
@@ -69,12 +70,24 @@ jobs:
           docker build -t greenluxacrdevidckowude2cgc.azurecr.io/greenlux-agents:${{ github.sha }} .
           docker push greenluxacrdevidckowude2cgc.azurecr.io/greenlux-agents:${{ github.sha }}
 
-      - name: Update Container App
+      - name: Update agent API Container App
         run: |
           az containerapp update \
             --name ca-greenlux-agents-dev \
             --resource-group rg-greenlux-sentinel \
             --image greenluxacrdevidckowude2cgc.azurecr.io/greenlux-agents:${{ github.sha }}
+
+      - name: Build and push operator UI image
+        run: |
+          docker build -t greenluxacrdevidckowude2cgc.azurecr.io/greenlux-ui:${{ github.sha }} ./ui
+          docker push greenluxacrdevidckowude2cgc.azurecr.io/greenlux-ui:${{ github.sha }}
+
+      - name: Update operator UI Container App
+        run: |
+          az containerapp update \
+            --name ca-greenlux-ui-dev \
+            --resource-group rg-greenlux-sentinel \
+            --image greenluxacrdevidckowude2cgc.azurecr.io/greenlux-ui:${{ github.sha }}
 
       - uses: actions/setup-python@v6
         with:

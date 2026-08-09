@@ -35,13 +35,13 @@ export function AskForm() {
             name="question"
             rows={3}
             required
-            placeholder="e.g. Which 5 Luxembourg-domiciled funds have a sustainability_rating of 5, ordered by total_net_assets?"
+            placeholder="e.g. Combine this fund's risk score with what its KIID says about business exclusions, and give one synthesized answer"
             className="w-full rounded border border-black/15 bg-transparent p-2 text-sm dark:border-white/20"
           />
         </div>
         <div>
           <label htmlFor="fund_id" className="mb-1 block text-sm font-medium">
-            Fund ID <span className="font-normal text-black/50 dark:text-white/50">(only needed for risk score / report requests)</span>
+            Fund ID <span className="font-normal text-black/50 dark:text-white/50">(needed for risk score / report / evidence / multi-hop requests)</span>
           </label>
           <input
             id="fund_id"

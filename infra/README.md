@@ -27,6 +27,7 @@ phases (which still holds one now-redundant resource, `greenlux-openai`).
 | `openai.bicep` | Azure OpenAI resource + one model deployment (`gpt-5-mini`, `GlobalStandard` SKU — see below) |
 | `container-registry.bicep` | ACR, Basic SKU, admin user disabled — hosts the agent API image |
 | `container-apps.bicep` | Container Apps Environment + Container App (agent API, `api/app.py`) |
+| `container-apps-ui.bicep` | A second Container App (operator UI, `ui/`), same Environment as above |
 | `functions.bicep` | Function App, Consumption plan, Python — timer-triggered ETL orchestration |
 | `apim.bicep` | API Management, Consumption tier, OpenAPI-imported from the live Container App |
 | `ai-search.bicep` | Azure AI Search, Free (F0) SKU — document-evidence index for the Phase 8 evidence agent (see below, **authored, not deployed**) |
@@ -227,7 +228,9 @@ for why, and keep running infra changes manually per this README's earlier secti
   `func-greenlux-etl-dev-idckowude2cgc`, and `plan-greenlux-etl-dev` (the Function App's App
   Service Plan) individually, plus `AcrPush` (data-plane) on the registry. **No
   `Microsoft.Authorization/roleAssignments/write` (i.e. no `User Access Administrator`) and no Key
-  Vault access** — which is exactly why infra changes stay manual:
+  Vault access** — plus, since the operator UI's Container App joined the deploy scope, a fourth
+  `Contributor` grant on `ca-greenlux-ui-dev` specifically, added the same ad hoc way as the other
+  three (see the numbered list below) rather than declared in Bicep — which is exactly why infra changes stay manual:
   `infra/modules/container-apps.bicep`/`functions.bicep` create RBAC role assignments, and a full
   `az deployment group create` also needs `postgresAdministratorPassword`/`apiAuthToken` from Key
   Vault. Granting either would have been a materially bigger permission footprint than "deploy the
@@ -348,7 +351,7 @@ production pipeline. Concretely:
 - **The CI managed identity's RBAC grants aren't tracked in committed IaC** — they were created
   ad hoc (`az role assignment create`, and once via a throwaway Bicep template to work around a
   CLI bug) rather than declared in `infra/*.bicep`. Reproducing `id-greenlux-github-deploy`'s
-  permissions from scratch means redoing the four grants listed above (Contributor ×3, AcrPush ×1)
+  permissions from scratch means redoing the five grants listed above (Contributor ×4, AcrPush ×1)
   by hand; nothing in `infra/` would recreate them.
 - The now-redundant `greenlux-openai` resource in the old `Azure for Students` subscription has
   been deleted (confirmed via `az cognitiveservices account show` returning `ResourceNotFound`).

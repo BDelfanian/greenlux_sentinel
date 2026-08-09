@@ -2,16 +2,21 @@
 
 Operator UI for the GreenLux Sentinel multi-agent system (CLAUDE.md decision #5). One page: ask a
 question in plain text, it's routed by the LangGraph supervisor to whichever specialist agent can
-answer it (NL2SQL, greenwashing-risk, Power BI dashboard, query-optimizer, multilingual report),
-and the full result — not just a number — is rendered: the generated SQL/DAX, the risk explanation
-and caveat, the report body in EN/FR/DE with citations, plus the human approve/reject actions for
-the two agents that require one (query-optimizer, report). A raw-JSON panel is always available
-for anything the structured view doesn't surface.
+answer it (NL2SQL, greenwashing-risk, Power BI dashboard, query-optimizer, multilingual report,
+document-evidence — Phase 8b), or, for a question that needs several combined, planned and chained
+automatically across them (`multi_hop` — Phase 8c). The full result — not just a number — is
+rendered: the generated SQL/DAX, the risk explanation and caveat, the report body in EN/FR/DE with
+citations, the evidence agent's cited-or-abstaining answer with document citations, the multi-hop
+plan/trace, plus the human approve/reject actions for the two agents that require one
+(query-optimizer, report). A raw-JSON panel is always available for anything the structured view
+doesn't surface.
 
-This is **not** a general chat interface — no conversation history, no RAG, no free-form agent
-loop. It's a thin client over five fixed, schema-constrained agents that already exist in
-`src/greenlux_sentinel/agents/`; see CLAUDE.md decision #5 for why that distinction matters (it's
-what keeps this different from the sibling project's actual RAG chat app).
+This is **not** a general chat interface — no conversation history, no free-form agent loop, no
+open-ended RAG conversation. It's a thin client over seven fixed, schema-constrained agents that
+already exist in `src/greenlux_sentinel/agents/`; see CLAUDE.md decision #5 for why that
+distinction matters (it's what keeps this different from the sibling project's actual RAG chat
+app — see CLAUDE.md decision #4's Phase 8 correction for the fuller differentiation story, since
+this project does now retrieve and cite documents too, just not through a chat interface).
 
 ## Running locally
 
