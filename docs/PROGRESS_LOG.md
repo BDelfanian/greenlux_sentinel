@@ -10,6 +10,64 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 8e (continued) — committed, deployed, and verified over the public internet
+
+**Completed:** 2026-08-09
+
+**Done:**
+- **Committed and pushed** all of Phase 8a-8e (`d786a4f`, 38 files) after a final `ruff check .`
+  pass caught one real lint error (an unused `SimpleNamespace` import in
+  `tests/test_evidence_agent.py`) — fixed before committing, so CI's lint step would pass clean
+  the first time, not as a fixup after a red run.
+- **CI passed clean** (lint + 215 tests). **Deploy** (builds+pushes a new image, updates the
+  Container App, redeploys the Function App) required a manual approval click in GitHub's `deploy`
+  Environment — confirmed this gate is real, not just documented, by watching the run sit in
+  `status: waiting` until approved, then complete successfully.
+- **Found and fixed a second real bug, this time in production**: the first live `/evidence` call
+  against the actual public Container App URL 500'd. Pulled real container logs
+  (`az containerapp logs show`) rather than guessing, and found the exact cause:
+  `relation "document_citations" does not exist` — the table had only ever been applied to the
+  *local* docker Postgres (manually, back in Phase 8a/8b); the documented pre-existing gap ("no
+  automated schema-apply mechanism for live Azure Postgres," flagged but not fixed in Phase 8a's
+  entry) had now actually bitten. Diagnosed and fixed live: the user's own machine couldn't reach
+  the Postgres server directly (firewall restricts it to Azure-internal access — confirmed by a
+  `ConnectionTimeout`, not an auth error), so the fix ran from Azure Cloud Shell instead
+  (Azure-network-local, `psql` preinstalled), re-running the exact `CREATE TABLE IF NOT EXISTS`
+  from `schema.sql` — safe, since every other statement in that file is a no-op against an
+  already-initialized database.
+- **Fully re-verified against the real public internet** after the fix, with the real bearer
+  token (fetched by the user from Key Vault, not by me — blocked for me the same way the earlier
+  `az` mutations were): `POST /evidence` returned a real cited KIID answer;
+  `POST /ask` with a multi_hop-shaped question planned `["sql", "risk", "evidence"]`, hit a
+  *second*, different real Postgres rejection on the `sql` hop this time (`set-returning functions
+  are not allowed in COALESCE` — the LLM-generated query, not a bug in this session's code) and
+  recorded it as a clean `hop_error` while `risk` and `evidence` both succeeded and `synthesize()`
+  produced a correct, real, cited final answer. Two independent real SQL-guardrail rejections now
+  observed (this session's local test hit `"multiple statements are not allowed"`; this one hit
+  a different, equally real Postgres error) — both handled by the multi-hop dispatcher exactly as
+  designed, not a coincidence of one lucky test case.
+
+**Deviations from the original plan:** the classifier-blocked-`az`-mutations pattern from the
+earlier Phase 8e entry held for *every* live-mutating step, not just the ones already listed
+there: `git push` itself was fine (no classifier block), but `az containerapp logs show` (a
+**read**, not a mutation) was also blocked, requiring the container-logs diagnosis to happen via
+a `curl` 500 first and then reasoning from the FastAPI/Starlette traceback structure the API
+itself doesn't leak in production — actually, correction, `az containerapp logs show` **did**
+work when run directly rather than via `az containerapp show` (the earlier blocked one) — the
+block isn't a blanket "any containerapp command," it's finer-grained than that; don't assume a
+whole command family is blocked from one blocked example. Also: no CLI subcommand exists for
+ad-hoc SQL against a Flexible Server in this az CLI version (`az postgres flexible-server execute`
+doesn't exist) — Cloud Shell + `psql` is the actual answer, not an Azure CLI one-liner.
+
+**Next step:** Phase 8 (8a through 8e) is now fully complete — built, tested, live-deployed, and
+verified end to end over the real public internet, including graceful real-world failure modes.
+User's stated next priority: portfolio polish, specifically refreshing the README/demo materials
+(still Phase-6-era) to actually showcase Phase 8's capability and the live-bug-fixing story, not
+further production-hardening (auth/migrations/etc. — explicitly deprioritized, this project stays
+scoped as a portfolio piece per RESPONSIBLE_AI.md's own framing).
+
+---
+
 ## Phase 8e — Live Azure deployment + real end-to-end verification
 
 **Completed:** 2026-08-09
