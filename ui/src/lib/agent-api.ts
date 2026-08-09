@@ -39,13 +39,35 @@ async function callAgentApi<T>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 
-// Mirrors supervisor.SupervisorState in agents/supervisor.py.
+// Mirrors evidence_agent.answer_with_evidence()'s return shape.
+export type DocumentCitation = {
+  id: string;
+  doc_type: "kiid" | "prospectus" | "regulation" | "cssf_guidance";
+  content?: string;
+  source_url?: string | null;
+};
+
+export type EvidenceResultData = {
+  answer: string;
+  document_citations: DocumentCitation[];
+  numeric_citations: number[];
+  abstained: boolean;
+  sources_considered: number;
+};
+
+// Mirrors supervisor.SupervisorState in agents/supervisor.py -- Phase 8c added the multi_hop-only
+// fields (plan/hop_results/hop_errors/trace/final_answer), only populated when route === "multi_hop".
 export type AskResult = {
   request: string;
   fund_id?: string | null;
-  route?: "sql" | "risk" | "query_optimizer" | "dashboard" | "report";
+  route?: "sql" | "risk" | "query_optimizer" | "dashboard" | "report" | "evidence" | "multi_hop";
   result?: Record<string, unknown>;
   error?: string;
+  plan?: string[];
+  hop_results?: Record<string, Record<string, unknown>>;
+  hop_errors?: Record<string, string>;
+  trace?: { hop: string; status: "ok" | "error"; error?: string }[];
+  final_answer?: EvidenceResultData;
 };
 
 export function ask(question: string, fundId: string | null): Promise<AskResult> {

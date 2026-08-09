@@ -7,7 +7,7 @@ check scope drift — if an implementation choice can't point to a row here, ask
 |---|---|---|
 | 1 | Agentic theme combining 3+ of {ML, BI, ETL} | Four: agentic ETL (ETL Agent), ML (greenwashing-risk model), agentic BI (Dashboard Agent + dynamic Power BI), agentic query/analytics (NL2SQL + Query-Optimizer agents) |
 | 2 | LangChain / LangGraph / LangSmith | Supervisor + specialist agents built as a LangGraph graph; LangChain for tool/chain wiring; LangSmith for tracing every run |
-| 3 | MCP implementation | Four MCP servers: Postgres, Cosmos, Power BI, GLEIF — see [ARCHITECTURE.md](ARCHITECTURE.md#mcp-servers) |
+| 3 | MCP implementation | Five MCP servers: Postgres, Cosmos, Power BI, GLEIF, Azure AI Search (Phase 8) — see [ARCHITECTURE.md](ARCHITECTURE.md#mcp-servers) |
 | 4 | Deployed on Microsoft Azure | Full service map in [ARCHITECTURE.md](ARCHITECTURE.md#azure-service-map) |
 | 5 | Responsible AI: logging, auditability, guardrails | Postgres audit-log table + LangSmith traces + Azure Monitor; output validators enforcing tool-sourced numeric claims — see [RESPONSIBLE_AI.md](RESPONSIBLE_AI.md) |
 | 5b | Human-in-the-loop | Approval gate before query-optimizer schema changes and before report publication — see [RESPONSIBLE_AI.md](RESPONSIBLE_AI.md#human-in-the-loop-gates) |
@@ -23,10 +23,19 @@ check scope drift — if an implementation choice can't point to a row here, ask
 
 ## Explicit non-goals (to prevent scope creep back toward the sibling project)
 
-- No vector search / RAG over regulatory PDF text
-- No knowledge-graph traversal (Cosmos Gremlin) — that's agentic-rag-lu's territory
-- No RAG-style chat as the primary interface — the Phase 7 Next.js operator UI (`ui/`, CLAUDE.md
-  decision #5) is a structured request/response client over the five fixed specialist agents, not
-  an open-ended conversational surface; Power BI + the generated report remain the primary
-  analyst-facing deliverable
+- **Superseded (Phase 8) — was "no vector search / RAG over regulatory PDF text."** Reversed at
+  the user's explicit request; see CLAUDE.md decision #4's Phase 8 correction for the full
+  reasoning and what still differentiates this project from agentic-rag-lu (mechanism of use and
+  question shape, not "we don't touch documents").
+- No knowledge-graph traversal (Cosmos Gremlin) — that's agentic-rag-lu's territory, still true
+  post-Phase 8: the new document index lives in Azure AI Search, not Cosmos, and Phase 8's own
+  entity tagging deliberately stops short of graph construction (see
+  [DATA.md](DATA.md#document-corpus-phase-8))
+- No RAG-style chat as the primary interface — the operator UI (`ui/`, CLAUDE.md decision #5,
+  updated Phase 8b/8c) is a structured request/response client over seven fixed specialist
+  agents, not an open-ended conversational surface; Power BI + the generated report remain the
+  primary analyst-facing deliverable
+- No free-form agent-to-agent messaging — Phase 8c's multi-hop orchestration is a
+  supervisor-*planned* pipeline (planner picks an ordered hop list, dispatch runs them, synthesize
+  combines them), not agents conversing with each other
 - No literal "SFDR Article" column fabricated in any schema

@@ -108,6 +108,17 @@ module openAi 'modules/openai.bicep' = {
   }
 }
 
+// Phase 8a -- authored, NOT deployed this session (docs/PROGRESS_LOG.md, infra/README.md).
+module aiSearch 'modules/ai-search.bicep' = {
+  name: 'ai-search'
+  params: {
+    location: location
+    namePrefix: namePrefix
+    environmentName: environmentName
+    uniqueSuffix: uniqueSuffix
+  }
+}
+
 module containerRegistry 'modules/container-registry.bicep' = {
   name: 'container-registry'
   params: {
@@ -164,6 +175,27 @@ module apiAuthTokenSecret 'modules/key-vault-secret.bicep' = if (!empty(apiAuthT
   }
 }
 
+// Two separate keys (least-privilege): the admin key is only ever used by the offline ingestion
+// path (etl_agent.run_document_ingestion -> load_documents_search.py), the query key is what the
+// running agent API uses at request time (mcp_servers/search_server.py).
+module aiSearchAdminKeySecret 'modules/key-vault-secret.bicep' = {
+  name: 'ai-search-admin-key-secret'
+  params: {
+    keyVaultName: keyVault.outputs.keyVaultName
+    secretName: 'azure-search-admin-key'
+    secretValue: aiSearch.outputs.adminKey
+  }
+}
+
+module aiSearchQueryKeySecret 'modules/key-vault-secret.bicep' = {
+  name: 'ai-search-query-key-secret'
+  params: {
+    keyVaultName: keyVault.outputs.keyVaultName
+    secretName: 'azure-search-query-key'
+    secretValue: aiSearch.outputs.queryKey
+  }
+}
+
 // --- Compute layer ---
 
 module containerApps 'modules/container-apps.bicep' = {
@@ -189,6 +221,9 @@ module containerApps 'modules/container-apps.bicep' = {
     cosmosContainer: cosmos.outputs.containerName
     openAiEndpoint: openAi.outputs.endpoint
     openAiDeploymentName: openAi.outputs.deploymentName
+    openAiEmbeddingDeploymentName: openAi.outputs.embeddingDeploymentName
+    azureSearchEndpoint: aiSearch.outputs.endpoint
+    azureSearchIndexName: 'greenlux-docs'
     langchainProject: 'greenlux-sentinel'
     langchainEndpoint: 'https://eu.api.smith.langchain.com'
     gleifApiBaseUrl: 'https://api.gleif.org/api/v1'
@@ -240,6 +275,7 @@ output keyVaultUri string = keyVault.outputs.keyVaultUri
 output postgresFqdn string = postgres.outputs.fqdn
 output cosmosEndpoint string = cosmos.outputs.endpoint
 output openAiEndpoint string = openAi.outputs.endpoint
+output aiSearchEndpoint string = aiSearch.outputs.endpoint
 output containerAppFqdn string = containerApps.outputs.containerAppFqdn
 output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
 output functionAppName string = functionApp.outputs.functionAppName

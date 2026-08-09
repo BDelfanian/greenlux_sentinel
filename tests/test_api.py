@@ -171,6 +171,20 @@ class TestRoutes:
         assert response.status_code == 200
         assert "fund_id" in response.json()["error"]
 
+    def test_evidence(self):
+        result = {
+            "answer": "Cited [doc:kiid_1_0].",
+            "document_citations": [{"id": "kiid_1_0"}],
+            "numeric_citations": [],
+            "abstained": False,
+            "sources_considered": 1,
+        }
+        with patch("greenlux_sentinel.agents.evidence_agent.answer_with_evidence", return_value=result) as m:
+            response = client.post("/evidence", json={"question": "Is this fund Article 8?", "fund_id": "F1"})
+        assert response.status_code == 200
+        assert response.json() == result
+        m.assert_called_once_with("Is this fund Article 8?", "F1")
+
     def test_etl_run(self):
         summary = {"funds_loaded": 12, "top100_holdings_docs": 4, "verified_holdings_docs": 5, "gleif_matched": 3}
         with patch("greenlux_sentinel.agents.etl_agent.run_ingestion", return_value=summary) as m:

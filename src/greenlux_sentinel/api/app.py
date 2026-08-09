@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from greenlux_sentinel.agents import (
     dashboard_agent,
     etl_agent,
+    evidence_agent,
     query_optimizer_agent,
     report_agent,
     risk_agent,
@@ -77,6 +78,11 @@ class SqlRequest(BaseModel):
 
 class DashboardRequest(BaseModel):
     question: str
+
+
+class EvidenceRequest(BaseModel):
+    question: str
+    fund_id: str | None = None
 
 
 class ProposeIndexRequest(BaseModel):
@@ -129,6 +135,16 @@ def post_risk(fund_id: str) -> dict[str, Any]:
 @app.post("/dashboard", dependencies=[_AUTH])
 def post_dashboard(body: DashboardRequest) -> dict[str, Any]:
     return _call(dashboard_agent.update_dashboard, body.question)
+
+
+@app.post("/evidence", dependencies=[_AUTH])
+def post_evidence(body: EvidenceRequest) -> dict[str, Any]:
+    """Phase 8b: combines structured fund facts with retrieved document evidence into one cited
+    answer, or an explicit abstention when nothing retrieved supports one — see
+    agents/evidence_agent.py. Not yet reachable from the /ask supervisor graph (that multi-hop
+    rewrite is a separate, later phase — docs/PROGRESS_LOG.md); this dedicated route is the only
+    way to call it for now, same as every other specialist's own route."""
+    return _call(evidence_agent.answer_with_evidence, body.question, body.fund_id)
 
 
 @app.post("/query-optimizer/propose", dependencies=[_AUTH])

@@ -99,6 +99,54 @@ Phase 2's time budget. Left as a candidate follow-up, not blocking Phase 3.
 | Full Holdings Data for the Top 100 ETFs | [Kaggle](https://www.kaggle.com/datasets/jackstev298/full-holdings-data-for-the-top-100-etfs) | Top 100 ETFs, constituent-level | CSV → Cosmos DB (reshaped to JSON) | Tier 2: real security-level holdings |
 | Public Company ESG Ratings Dataset | [Kaggle](https://www.kaggle.com/datasets/alistairking/public-company-esg-ratings-dataset) | ~700 companies | CSV → reshaped to nested JSON → Cosmos DB | Tier 2: company-level ESG scores joined to holdings by ticker |
 | GLEIF LEI data | [GLEIF API](https://www.gleif.org/en/lei-data/gleif-api) (live, no key) | Luxembourg-registered entities (SICAV/FCP, country=LU) | JSON via REST, called at runtime | Authentic Luxembourg legal-entity grounding — proves domicile claims against a real public register |
+| Fund KIIDs/PRIIPS-KIDs | Issuer (BlackRock/iShares), per verified ISIN | 5 PDFs | PDF → text → Azure AI Search | Document corpus, Phase 8: per-fund disclosure evidence for the Evidence Agent |
+| Umbrella prospectuses | Issuer (BlackRock/iShares) | 2 PDFs (shared across the 5 ISINs) | PDF → text (capped, see below) → Azure AI Search | Document corpus, Phase 8 |
+| SFDR Regulation + RTS | [EUR-Lex](https://eur-lex.europa.eu/), CELEX 32019R2088 / 32022R1288 | 2 PDFs | PDF → text → Azure AI Search | Document corpus, Phase 8: general regulatory grounding |
+| CSSF FAQ + Circular 26/905 | [CSSF](https://www.cssf.lu/) | 2 PDFs | PDF → text → Azure AI Search | Document corpus, Phase 8: general regulatory grounding |
+
+## Document corpus (Phase 8)
+
+Backs the Evidence Agent (`agents/evidence_agent.py`) — see CLAUDE.md decision #4's Phase 8
+correction for why this exists at all (a deliberate reversal of the original "no RAG" decision).
+
+**11 documents total, every URL individually live-verified** (a real HTTP GET returning
+`application/pdf`, not assumed from a naming pattern) before being hardcoded into
+`etl/fetch_fund_documents.py` — same due-diligence standard as `fetch_verified_holdings.py`'s CSV
+URLs. Deliberately small: this project's document corpus is scoped to the 5 issuer-verified UCITS
+ETFs already in Tier 2 plus a hand-curated general regulatory set, not an open-ended crawl.
+
+- **Fund-specific (7 PDFs):** one PRIIPS KID per verified ISIN (`IE00BYVJRR92`, `IE00BFNM3G45`,
+  `IE00BDZZTM54`, `IE00BKVL7331`, `IE00B5BMR087`) plus 2 shared umbrella prospectuses (iShares IV
+  plc covers SUAS/SASU — confirmed by cross-referencing Fidelity's factsheet URLs; SUSW/MVEA by
+  inference from the same 2018-2019 SRI/ESG-factor product-launch wave, **not independently
+  confirmed per-ISIN**; iShares VII plc covers CSSPX, confirmed via Yahoo Finance).
+  **Note:** the EU PRIIPS KID already carries the SFDR sustainability summary for these Article 8
+  products — there is no separate "SFDR pre-contractual annex" PDF to fetch per fund, contrary to
+  an earlier planning assumption.
+- **General regulatory (4 PDFs):** SFDR Regulation (EU) 2019/2088, SFDR RTS (EU) 2022/1288 (both
+  EUR-Lex — the PDF export endpoint needs real `Accept`/`Accept-Language` headers or it returns a
+  202 with an empty body), CSSF FAQ on SFDR, CSSF Circular 26/905 (the real underlying document
+  behind "the CSSF's 2026 supervisory priorities in the area of sustainable finance," already
+  cited conceptually in "Why this topic" above).
+
+**No entity/relationship graph.** Full GraphRAG-style graph construction + community detection
+(whether via Microsoft's `graphrag` library or a hand-rolled graph store) was evaluated and
+deliberately not built — see `etl/extract_document_entities.py`'s module docstring. An
+11-document corpus covering 5 known funds has no hidden entity structure worth discovering; the
+real structure (which fund, which doc type, which regulation) is already known before ingestion
+runs. Instead: lightweight LLM entity tagging per document (fund names, ISINs, regulation
+references), stored as a searchable field in Azure AI Search.
+
+**Document size cap.** The umbrella prospectuses are full legal documents covering dozens of
+sub-funds beyond the 5 this project tracks — one alone extracted to 2.85M characters / 2907
+chunks before capping. `extract_document_entities._MAX_DOCUMENT_CHARS = 60_000` bounds every
+document's contribution, same portfolio-scale-cap philosophy as `etl_agent._GLEIF_LOOKUP_LIMIT`.
+
+**Not yet live.** Azure AI Search + the embedding deployment are authored in Bicep but not
+deployed (`infra/README.md`'s Phase 8 note) as of Phase 8a-8d. `etl_agent.run_document_ingestion()`
+is verified locally against real fetched PDFs, real Azure OpenAI entity extraction, and real
+Postgres, with fakes only for the not-yet-deployed Search/embedding clients — see
+docs/PROGRESS_LOG.md's Phase 8a/8b entries for the verification detail.
 
 ## Multilingual layer
 

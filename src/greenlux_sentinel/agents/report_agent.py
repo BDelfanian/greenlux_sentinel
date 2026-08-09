@@ -158,10 +158,16 @@ def draft_report(
         facts = _fetch_fund_facts(fund_id, conn, llm)
 
         citations = [risk_result["risk_score"]]
+        # risk_result["explanation"] is itself tool-sourced prose (risk_agent.explain(), built
+        # from real Cosmos holdings) and gets included in facts_text below -- its numbers (per-
+        # holding weights/ESG scores) must be citable too, or the guardrail rejects them as
+        # unsourced even though they're genuine tool output.
+        citations.extend(validators.extract_numbers(risk_result["explanation"]))
         citations.extend(v for value in facts["row"].values() if (v := _numeric(value)) is not None)
 
         facts_text = (
-            f"- greenwashing risk score (0-100, higher = bigger gap between claim and holdings): "
+            f"- greenwashing risk score (higher means a bigger gap between the claimed rating and "
+            f"the holdings): "
             f"{risk_result['risk_score']}\n"
             f"- risk score explanation: {risk_result['explanation']}\n"
             + "\n".join(f"- {k}: {v}" for k, v in facts["row"].items())

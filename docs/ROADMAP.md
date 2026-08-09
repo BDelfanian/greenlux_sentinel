@@ -187,8 +187,52 @@ environment, not just written or deployed without crashing.
 - [x] Short demo video/GIF
 - [x] Sanity pass on [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) — every row still true
 
-All six roadmap phases are now complete — see docs/PROGRESS_LOG.md's top entry for what's left as
-optional, non-blocking follow-up (none of it required for the portfolio deliverable).
+All six original roadmap phases are complete. Phase 8 (document evidence + multi-hop
+orchestration) has 8a-8d built and verified locally; 8e (live Azure deployment) is the remaining
+step — see below and docs/PROGRESS_LOG.md's top entry.
+
+## Phase 8 — Document evidence agent (CLAUDE.md decision #4 reversal)
+
+- [x] **8a — document sourcing + ingestion pipeline.** 11 real, live-verified PDFs (5 fund
+      KIIDs/PRIIPS-KIDs + 2 shared umbrella prospectuses for the 5 issuer-verified ETFs, plus
+      SFDR Reg 2019/2088, SFDR RTS 2022/1288, CSSF FAQ on SFDR, CSSF Circular 26/905) fetched by
+      `etl/fetch_fund_documents.py`. Entity tagging via the existing Azure OpenAI chat model
+      (`etl/extract_document_entities.py`) — **not** the Microsoft `graphrag` library (dropped
+      after a real Windows packaging blocker; see docs/PROGRESS_LOG.md) and **not** a hand-rolled
+      graph database (deliberately scoped down for an 11-document corpus — see that entry too).
+      `etl/load_documents_search.py` embeds + indexes into Azure AI Search. New
+      `document_citations` Postgres table. Azure AI Search + a second OpenAI embedding deployment
+      authored in Bicep, **not deployed** (infra/README.md's Phase 8 note).
+- [x] **8b — evidence agent.** `mcp_servers/search_server.py` (hybrid search, OR-shaped
+      fund/regulatory filter), `guardrails/grounding.py` (Principle 5: cite a retrieved doc or
+      abstain), `agents/evidence_agent.py`, `POST /evidence`. 24 new tests, 190 total passing.
+      Live-verified against real local Postgres + real Azure OpenAI chat calls (fake search
+      client, since Azure AI Search isn't deployed yet): correct cited answers on
+      directly-answerable questions, clean abstention (no crash) on interpretive questions the
+      evidence doesn't settle and on empty retrieval, and real `document_citations` rows
+      persisted.
+- [x] **8c — multi-hop supervisor rewrite.** `agents/supervisor.py`: new `SupervisorState` fields
+      (`plan`, `hop_results`, `hop_errors`, `trace`, `final_answer`), a `multi_hop` route (planner
+      → dispatch loop → synthesize) plus a new single-hop `evidence` route, `POST /ask` is the
+      only reachable entry point for `multi_hop` (dedicated routes bypass the graph, unaffected).
+      25 new tests (46 total in `test_supervisor.py`), 215 passing repo-wide. Live-verified via a
+      restarted local uvicorn: the 6 pre-existing routes still work unchanged through the
+      rewritten graph (real risk-score call confirmed), and a real multi-hop request correctly
+      LLM-routed to `multi_hop`, planned `["evidence"]`, dispatched it, and failed at the exact
+      expected point (undeployed Azure AI Search) with a clean structured error, not a crash.
+- [x] **8d — UI + full documentation pass.** `ui/`'s `agent-api.ts` (`DocumentCitation`,
+      `evidence`/`multi_hop` route types, `plan`/`hop_results`/`trace`/`final_answer` fields) and
+      `ResultView.tsx` (`EvidenceResult`, `MultiHopResult`) — type-checked, production build
+      clean, and live-verified via real browser-equivalent form POSTs (same technique as Phase
+      7's verification): correct route labels, correct citation/abstention rendering, correct
+      plan/hop-trace rendering, all reaching the same expected undeployed-Azure-Search error as
+      the API itself. Full documentation pass: CLAUDE.md decision #4's reversal write-up (+ #5,
+      #6 updates), ARCHITECTURE.md's agent graph/MCP servers/API routes/differentiation table,
+      DATA.md's new "Document corpus (Phase 8)" section, README.md's differentiation section,
+      REQUIREMENTS_TRACEABILITY.md's non-goals (marked superseded, not deleted).
+- [ ] **8e — live Azure deployment.** Azure AI Search + embedding deployment provisioning, real
+      ingestion run, live retrieval-quality verification. Explicitly gated on the user's
+      "ready to deploy" go-ahead, per this session's standing local-only instruction.
 
 ## Phase 7 — Operator UI (Next.js)
 

@@ -17,6 +17,15 @@
 4. **PII redaction.** Any free-text fields ingested (e.g. company descriptions) pass through a
    redaction step before being stored or surfaced, even though the datasets in use are
    company/fund-level, not individual-level — defensive by default.
+5. **Document-grounded claims must cite a retrieved passage or abstain.** The Evidence Agent
+   (Phase 8b) is not allowed to answer a question requiring document evidence without either
+   citing a real, retrieved document id (`[doc:<id>]`) for every claim, or explicitly answering
+   "I don't know" when nothing it retrieved actually supports an answer. Enforced by
+   `guardrails/grounding.py`'s `document_grounded_or_abstained()`, the same reject/regenerate
+   pattern as Principle 2, extended from *numeric* tool-sourcing to *document-citation*
+   tool-sourcing. Like Principle 3's risk-score caveat, this is a citation-validity check, not
+   full semantic/entailment verification — it confirms a cited document was actually retrieved
+   this run, not that the document's text truly supports the specific claim made about it.
 
 ## Human-in-the-loop gates
 

@@ -68,3 +68,22 @@ CREATE TABLE IF NOT EXISTS fund_reports (
     approved_at             TIMESTAMPTZ,
     PRIMARY KEY (report_id, language)
 );
+
+-- Document-sourced citations for the evidence agent (agents/evidence_agent.py, Phase 8b) — a
+-- structurally different citation shape from fund_reports.citations above (that column is a flat
+-- JSONB array of tool-sourced *numbers*; this table is one row per retrieved *document passage*
+-- an answer actually cited). Kept as a separate table rather than crammed into the existing
+-- column so the well-tested numeric-citations report flow stays untouched. report_id is nullable
+-- because linking an evidence-agent answer into a *published* report is deferred past Phase 8b —
+-- see docs/PROGRESS_LOG.md's Phase 8a/8b entry.
+CREATE TABLE IF NOT EXISTS document_citations (
+    citation_id             UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    report_id               UUID,            -- nullable; only set if/when linked into a published report
+    fund_id                 TEXT REFERENCES funds(fund_id),
+    doc_id                  TEXT NOT NULL,   -- Azure AI Search document/chunk id
+    doc_type                TEXT NOT NULL CHECK (doc_type IN ('kiid', 'prospectus', 'regulation', 'cssf_guidance')),
+    source_url               TEXT,
+    passage_excerpt          TEXT,
+    relevance_score           NUMERIC,
+    created_at               TIMESTAMPTZ DEFAULT now()
+);

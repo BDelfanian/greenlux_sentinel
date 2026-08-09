@@ -14,6 +14,11 @@ param modelVersion string = '2025-08-07'
 // offers GlobalStandard, DataZoneStandard, or the Provisioned-Managed SKUs, no plain 'Standard'.
 param deploymentSkuName string = 'GlobalStandard'
 param skuCapacity int = 10
+// Phase 8a: embedding model backing the document-evidence search index (docs/PROGRESS_LOG.md).
+// Same account, a second deployment -- no new Cognitive Services resource needed.
+param embeddingDeploymentName string = 'text-embedding-3-small'
+param embeddingModelVersion string = '1'
+param embeddingSkuCapacity int = 10
 
 var accountName = 'oai-${namePrefix}-${environmentName}-${uniqueSuffix}'
 
@@ -49,8 +54,30 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-
   }
 }
 
+resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
+  parent: openAiAccount
+  name: embeddingDeploymentName
+  sku: {
+    name: 'GlobalStandard'
+    capacity: embeddingSkuCapacity
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: embeddingDeploymentName
+      version: embeddingModelVersion
+    }
+  }
+  // Deployments on the same account provision sequentially, not in parallel -- avoids a
+  // transient "another deployment operation is in progress on this account" conflict.
+  dependsOn: [
+    modelDeployment
+  ]
+}
+
 output accountName string = openAiAccount.name
 output endpoint string = openAiAccount.properties.endpoint
 output deploymentName string = modelDeployment.name
+output embeddingDeploymentName string = embeddingDeployment.name
 #disable-next-line outputs-should-not-contain-secrets // consumed only by the module that writes it into Key Vault, never a deployment output surfaced to the caller
 output apiKey string = openAiAccount.listKeys().key1

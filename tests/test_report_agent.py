@@ -27,6 +27,11 @@ class SequentialFakeLLM:
 
 _RISK_RESULT = {"risk_score": 42.5, "explanation": "driven by laggard holdings", "caveat": "unused"}
 _SQL_RESULT = {"sql": "SELECT name, category FROM funds WHERE fund_id = 'F1'", "rows": [{"name": "Fund One", "category": "Equity"}]}
+_RISK_RESULT_WITH_NUMERIC_EXPLANATION = {
+    "risk_score": 42.5,
+    "explanation": "NVDA (10.16% weight, ESG score 899); TSLA (2.93% weight, ESG score 993).",
+    "caveat": "unused",
+}
 
 
 class TestDraftReport:
@@ -78,6 +83,29 @@ class TestDraftReport:
             result = report_agent.draft_report("F1", conn=conn, container=container, llm=llm)
 
         assert result["en"] == "the score is 42.5"
+
+    def test_numbers_in_risk_explanation_are_citable(self):
+        """Regression test: risk_result['explanation'] is tool-sourced prose folded into
+        facts_text, so a draft that repeats its numbers (e.g. per-holding weights/ESG scores)
+        must pass the guardrail without those numbers needing to appear anywhere else."""
+        conn = MagicMock()
+        container = MagicMock()
+        llm = SequentialFakeLLM(
+            [
+                "Driven by NVDA (10.16% weight, ESG score 899) and TSLA (2.93% weight, ESG score 993).",
+                "fr body 42.5",
+                "de body 42.5",
+            ]
+        )
+
+        with (
+            patch("greenlux_sentinel.agents.risk_agent.score_fund", return_value=_RISK_RESULT_WITH_NUMERIC_EXPLANATION),
+            patch("greenlux_sentinel.agents.sql_agent.ask", return_value=_SQL_RESULT),
+        ):
+            result = report_agent.draft_report("F1", conn=conn, container=container, llm=llm)
+
+        assert "10.16" in result["en"]
+        assert {10.16, 899.0, 2.93, 993.0}.issubset(set(result["citations"]))
 
     def test_fund_not_found_via_sql_raises(self):
         conn = MagicMock()

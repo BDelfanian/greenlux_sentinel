@@ -29,6 +29,15 @@ phases (which still holds one now-redundant resource, `greenlux-openai`).
 | `container-apps.bicep` | Container Apps Environment + Container App (agent API, `api/app.py`) |
 | `functions.bicep` | Function App, Consumption plan, Python — timer-triggered ETL orchestration |
 | `apim.bicep` | API Management, Consumption tier, OpenAPI-imported from the live Container App |
+| `ai-search.bicep` | Azure AI Search, Free (F0) SKU — document-evidence index for the Phase 8 evidence agent (see below, **authored, not deployed**) |
+
+**Phase 8 — authored, not deployed.** `ai-search.bicep`, the second (`text-embedding-3-small`)
+deployment in `openai.bicep`, and the `document-corpus` container in `storage.bicep` are real,
+`az bicep build`-validated IaC, but `az deployment group create` has not been run for them —
+per [docs/PROGRESS_LOG.md](../docs/PROGRESS_LOG.md)'s Phase 8a entry, this phase is local-only
+until explicitly promoted. The same treatment Power BI got before Phase 4 live-verified it: the
+template is correct and ready, the resource just isn't live yet. Unlike Power BI below, these
+resources genuinely will be provisioned by this Bicep once deployed — nothing external to manage.
 
 **Not provisioned here, deliberately: Power BI.** The live workspace/dataset/service-principal
 already exist in a separate personal Azure/Entra tenant

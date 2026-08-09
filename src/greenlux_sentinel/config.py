@@ -23,6 +23,8 @@ _KEY_VAULT_SECRET_NAMES: dict[str, str] = {
     "langchain_api_key": "langchain-api-key",
     "powerbi_client_secret": "powerbi-client-secret",
     "api_auth_token": "api-auth-token",
+    "azure_search_admin_key": "azure-search-admin-key",
+    "azure_search_query_key": "azure-search-query-key",
 }
 
 
@@ -44,6 +46,17 @@ class Settings(BaseSettings):
     azure_openai_api_key: str = ""
     azure_openai_deployment: str = ""
     azure_openai_api_version: str = "2024-10-21"
+    # Phase 8a: embedding model for the document-evidence search index -- a second deployment on
+    # the same Azure OpenAI account (infra/modules/openai.bicep), not a separate resource.
+    azure_openai_embedding_deployment: str = ""
+
+    # Phase 8a: document-evidence retrieval index (mcp_servers/search_server.py). Two keys,
+    # least-privilege -- admin is only used by the offline ingestion path, query is what the
+    # running agent API uses at request time. Not yet live -- see infra/README.md's Phase 8 note.
+    azure_search_endpoint: str = ""
+    azure_search_admin_key: str = ""
+    azure_search_query_key: str = ""
+    azure_search_index_name: str = "greenlux-docs"
 
     langchain_tracing_v2: bool = False
     langchain_api_key: str = ""

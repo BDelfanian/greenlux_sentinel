@@ -13,23 +13,33 @@ Built as a portfolio project targeting the Luxembourg investment-fund industry, 
 SFDR disclosures and marketing materials — see [docs/DATA.md](docs/DATA.md#why-this-topic) for
 sourcing.
 
-> **Status:** Phases 0-7 complete. Data pipeline, core agents, and MCP servers are
-> **live-deployed on Azure** (Power BI + report generation, Azure infra + CI/CD); a Next.js
-> operator UI (`ui/`, Phase 7) now sits in front of the Agent API for local/interactive use. See
-> [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
+> **Status:** Phases 0-7 complete and live-deployed. Phase 8 (document-evidence agent + multi-hop
+> orchestration) is in progress — 8a-8d built and verified locally, 8e (live Azure deployment)
+> pending. See [docs/ROADMAP.md](docs/ROADMAP.md) for what's built vs. planned and
 > [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for session-by-session detail.
 
 ## Why this exists
 
 Sibling project [agentic-rag-lu](https://github.com/BDelfanian/agentic-rag-lu) covers Luxembourg
-fund **compliance QA** via GraphRAG (OpenAI Responses API, Cosmos DB Gremlin, regulatory text
-retrieval). This project deliberately covers different ground: **quantitative risk analytics**
-over structured fund data, orchestrated with LangGraph/LangChain/LangSmith instead of native
-function-calling, using Cosmos DB's document API instead of its graph API, with MCP-exposed tools
-instead of native tool-calling, and a Power BI + report deliverable instead of open-ended RAG
-chat. It does have its own operator UI (`ui/`) for driving the agents directly, but that's a
-structured, single-request-in/full-result-out client over five fixed specialist agents — not a
-conversational surface. Full diff in
+fund **compliance QA** via full GraphRAG (hand-built Cosmos DB Gremlin graph, OpenAI Responses
+API, open-ended regulatory-text retrieval and chat). This project's core is **quantitative risk
+analytics** over structured fund data, orchestrated with LangGraph/LangChain/LangSmith instead of
+native function-calling, using Cosmos DB's document API instead of its graph API, with
+MCP-exposed tools instead of native tool-calling, and a Power BI + report deliverable instead of
+open-ended chat.
+
+**Phase 8 update:** the tool now also retrieves and cites real documents (fund disclosures +
+general SFDR/CSSF regulatory text) via Azure AI Search — the same service the sibling project
+uses — to answer questions a structured-data-only agent can't, abstaining explicitly when
+evidence is missing. That overlap with the sibling's document domain is real and deliberate, not
+an oversight; what still differentiates the two is *how* the documents are used: fused with
+structured fund analytics into one synthesized, cited-or-abstaining answer via a fixed
+LangGraph pipeline (including supervisor-planned multi-hop chaining across specialists), not an
+open-ended graph-traversal chat interface. No graph database or entity-relationship construction
+here either — deliberately scoped down for an 11-document corpus with no hidden structure to
+discover (see [docs/DATA.md](docs/DATA.md#document-corpus-phase-8)). The operator UI (`ui/`)
+stays a structured, single-request-in/full-result-out client, now over seven fixed specialist
+agents — not a conversational surface. Full diff in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#differentiation-from-agentic-rag-lu).
 
 ## Architecture at a glance

@@ -23,19 +23,27 @@ _NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 _ROUNDING_TOLERANCE = 0.01
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-# Deliberately conservative (requires >=9 digits across the match): current datasets are
-# company/fund-level with no phone numbers, so this only needs to catch an obvious phone-shaped
-# string without colliding with the short numeric citations (risk scores, ratings, percentages)
-# that are expected -- and validated -- in report text.
-_PHONE_RE = re.compile(r"(?<!\d)\+?\d[\d\-.\s]{7,}\d(?!\d)")
+# Deliberately conservative: current datasets are company/fund-level with no phone numbers, so
+# this only needs to catch an obvious phone-shaped string -- digit groups joined by phone-style
+# separators (dash/dot/space), e.g. "+352-621-123-456" -- without colliding with the short
+# numeric citations (risk scores, ratings, percentages) report text is expected to contain, or
+# with large *unformatted* financial figures (fund AUM, share counts) that are common in this
+# domain and would otherwise look "phone-shaped" to a bare 9+-digit-run check.
+_PHONE_RE = re.compile(r"(?<!\d)\+?\d{1,4}(?:[-.\s]\d{2,4}){2,}(?!\d)")
+
+
+def extract_numbers(text: str) -> list[float]:
+    """Return every number found in text, in the same format _NUMBER_RE recognizes. Used both to
+    check draft text (tool_sourced_numbers) and to register numbers already present in
+    tool-sourced prose (e.g. a risk explanation string) as legitimately citable."""
+    return [float(match.group(0).replace(",", "")) for match in _NUMBER_RE.finditer(text)]
 
 
 def tool_sourced_numbers(draft_text: str, trace_tool_results: list[float]) -> bool:
     """Return True if every number in draft_text traces back to trace_tool_results (within a
     small rounding tolerance)."""
     allowed = [float(v) for v in trace_tool_results]
-    for match in _NUMBER_RE.finditer(draft_text):
-        value = float(match.group(0).replace(",", ""))
+    for value in extract_numbers(draft_text):
         if not any(abs(value - a) <= _ROUNDING_TOLERANCE for a in allowed):
             return False
     return True

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AskResult } from "@/lib/agent-api";
+import type { AskResult, DocumentCitation } from "@/lib/agent-api";
 import { approveIndex, publishReportAction, rejectIndex, rejectReportAction } from "@/app/actions";
 import { GateAction } from "./GateAction";
 
@@ -168,12 +168,118 @@ function ReportResult({ result }: { result: Record<string, unknown> }) {
   );
 }
 
+const DOC_TYPE_LABELS: Record<string, string> = {
+  kiid: "KIID",
+  prospectus: "Prospectus",
+  regulation: "Regulation",
+  cssf_guidance: "CSSF Guidance",
+};
+
+function EvidenceResult({ result }: { result: Record<string, unknown> }) {
+  const answer = String(result.answer ?? "");
+  const abstained = Boolean(result.abstained);
+  const documentCitations = (result.document_citations as DocumentCitation[]) ?? [];
+  const numericCitations = (result.numeric_citations as number[]) ?? [];
+  const sourcesConsidered = Number(result.sources_considered ?? 0);
+
+  return (
+    <div className="space-y-4">
+      <Section title="Answer">
+        {abstained && (
+          <span className="mb-2 inline-block rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+            Abstained — insufficient evidence
+          </span>
+        )}
+        <p className="rounded border border-black/10 p-3 text-sm whitespace-pre-wrap dark:border-white/15">{answer}</p>
+      </Section>
+      <Section title={`Document citations (${documentCitations.length} of ${sourcesConsidered} retrieved)`}>
+        {documentCitations.length === 0 ? (
+          <p className="text-sm text-black/60 dark:text-white/60">None.</p>
+        ) : (
+          <ul className="space-y-2">
+            {documentCitations.map((c) => (
+              <li key={c.id} className="rounded border border-black/10 p-2 text-sm dark:border-white/15">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs font-medium uppercase dark:bg-white/10">
+                    {DOC_TYPE_LABELS[c.doc_type] ?? c.doc_type}
+                  </span>
+                  <span className="font-mono text-xs text-black/60 dark:text-white/60">{c.id}</span>
+                  {c.source_url && (
+                    <a href={c.source_url} target="_blank" rel="noreferrer" className="text-xs underline">
+                      source
+                    </a>
+                  )}
+                </div>
+                {c.content && <p className="mt-1 text-black/70 dark:text-white/70">{c.content}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+      {numericCitations.length > 0 && (
+        <Section title="Numeric citations">
+          <p className="font-mono text-sm">{numericCitations.join(", ")}</p>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function MultiHopResult({ data }: { data: AskResult }) {
+  const plan = data.plan ?? [];
+  const trace = data.trace ?? [];
+  const finalResult = data.result ?? {};
+
+  return (
+    <div className="space-y-4">
+      <Section title="Plan">
+        <div className="flex flex-wrap gap-2">
+          {plan.map((hop) => {
+            const step = trace.find((t) => t.hop === hop);
+            const status = step?.status ?? "pending";
+            const tone =
+              status === "ok"
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                : status === "error"
+                  ? "bg-red-500/15 text-red-700 dark:text-red-400"
+                  : "bg-black/5 text-black/50 dark:bg-white/10 dark:text-white/50";
+            return (
+              <span key={hop} className={`rounded-full px-3 py-1 text-xs font-medium ${tone}`}>
+                {hop} {status === "ok" ? "✓" : status === "error" ? "✗" : "…"}
+              </span>
+            );
+          })}
+        </div>
+        {trace.some((t) => t.status === "error") && (
+          <ul className="mt-2 space-y-1 text-xs text-red-700 dark:text-red-400">
+            {trace
+              .filter((t) => t.status === "error")
+              .map((t) => (
+                <li key={t.hop}>
+                  {t.hop}: {t.error}
+                </li>
+              ))}
+          </ul>
+        )}
+      </Section>
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold tracking-wide text-black/60 uppercase dark:text-white/50">
+          Synthesized answer
+        </h3>
+        <EvidenceResult result={finalResult} />
+      </div>
+    </div>
+  );
+}
+
 const ROUTE_LABELS: Record<string, string> = {
   sql: "NL2SQL agent",
   risk: "Greenwashing-Risk agent",
   dashboard: "Dashboard agent",
   query_optimizer: "Query-Optimizer agent",
   report: "Report agent",
+  evidence: "Evidence agent",
+  multi_hop: "Multi-hop (supervisor-planned)",
 };
 
 export function ResultView({ data }: { data: AskResult }) {
@@ -198,6 +304,8 @@ export function ResultView({ data }: { data: AskResult }) {
       {!error && result && route === "dashboard" && <DashboardResult result={result} />}
       {!error && result && route === "query_optimizer" && <QueryOptimizerResult result={result} />}
       {!error && result && route === "report" && <ReportResult result={result} />}
+      {!error && result && route === "evidence" && <EvidenceResult result={result} />}
+      {route === "multi_hop" && <MultiHopResult data={data} />}
 
       <details className="text-sm">
         <summary className="cursor-pointer text-black/50 select-none dark:text-white/50">Raw response</summary>

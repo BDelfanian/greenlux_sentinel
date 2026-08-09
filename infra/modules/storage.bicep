@@ -32,6 +32,16 @@ resource landingContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   }
 }
 
+// Phase 8a: raw fund-disclosure/regulatory PDFs pre-ingestion (docs/PROGRESS_LOG.md). Same
+// account as `landing` (both are "raw files pre-ETL"), separate container -- no reason to spin
+// up a second storage account for a second raw-file category.
+resource documentCorpusContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: '${landingStorage.name}/default/document-corpus'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 resource functionsStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: functionsStorageAccountName
   location: location

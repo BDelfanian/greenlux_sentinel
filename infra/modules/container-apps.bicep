@@ -31,6 +31,9 @@ param cosmosDatabase string
 param cosmosContainer string
 param openAiEndpoint string
 param openAiDeploymentName string
+param openAiEmbeddingDeploymentName string
+param azureSearchEndpoint string
+param azureSearchIndexName string
 param langchainProject string
 param langchainEndpoint string
 param gleifApiBaseUrl string
@@ -108,6 +111,9 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'COSMOS_CONTAINER', value: cosmosContainer }
             { name: 'AZURE_OPENAI_ENDPOINT', value: openAiEndpoint }
             { name: 'AZURE_OPENAI_DEPLOYMENT', value: openAiDeploymentName }
+            { name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT', value: openAiEmbeddingDeploymentName }
+            { name: 'AZURE_SEARCH_ENDPOINT', value: azureSearchEndpoint }
+            { name: 'AZURE_SEARCH_INDEX_NAME', value: azureSearchIndexName }
             { name: 'LANGCHAIN_TRACING_V2', value: 'true' }
             { name: 'LANGCHAIN_PROJECT', value: langchainProject }
             { name: 'LANGCHAIN_ENDPOINT', value: langchainEndpoint }

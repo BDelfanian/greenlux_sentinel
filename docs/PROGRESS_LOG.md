@@ -10,6 +10,335 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 8e — Live Azure deployment + real end-to-end verification
+
+**Completed:** 2026-08-09
+
+**Done:**
+- **Real Azure resources provisioned**, scoped deployments only (not the full `main.bicep`) —
+  deliberately, since `postgresAdministratorPassword` couldn't be safely re-supplied (Key Vault
+  reads are blocked in this environment, and Claude Code's own auto-mode classifier blocks
+  `az deployment group create`/`az keyvault secret set`/`az containerapp show-and-update` as
+  real-money/real-infra actions requiring direct human execution — confirmed by hitting that
+  block firsthand, not assumed in advance). The user ran three scoped `az deployment group create`
+  calls (`ai-search.bicep`, `openai.bicep`, `storage.bicep`) against the exact live resource
+  identity (verified read-only beforehand: existing OpenAI account and storage account properties
+  matched the Bicep exactly, so these applied as clean idempotent updates plus additive new
+  sub-resources — the live `gpt-5-mini` deployment, Postgres, and every other existing resource
+  were never touched). One transient `RequestConflict` on the first `openai.bicep` attempt
+  ("provisioning state is not terminal") cleared on retry after confirming (read-only) the account
+  had reached `Succeeded`. Result: `srch-greenlux-dev-idckowude2cgc` (Azure AI Search, F0) and a
+  `text-embedding-3-small` deployment on the existing OpenAI account, both real and live.
+- **Created the actual search index** — the Bicep module provisions the *service*, not the index
+  schema; `scripts/create_search_index.py` (new) does that via `SearchIndexClient`, matching
+  `document_citations`' precedent of the DB schema being applied outside Bicep too. Vector field
+  sized for `text-embedding-3-small`'s real 1536 dimensions, plain HNSW/cosine profile —
+  appropriate for this corpus's scale (~11 documents, ~400 chunks), no need for anything fancier.
+- **Found and fixed a real bug that only live testing could catch**: `search_server._build_filter()`
+  used SQL-style `doc_type in ('regulation', 'cssf_guidance')`, which Azure AI Search's OData
+  dialect rejects outright (`"Invalid expression: ... unsupported OData language feature"`) — it
+  requires the `search.in(field, 'a,b', ',')` function form instead. The Phase 8b unit tests
+  against a `MagicMock` client never caught this because a mock doesn't validate filter syntax,
+  only that *a* filter string was passed — a concrete illustration of why the plan flagged live
+  Azure AI Search verification as a distinct, necessary step rather than something local
+  fake-based tests could stand in for. Fixed, both affected unit test assertions updated, full
+  suite re-verified (215 passed), then re-confirmed against the live service.
+- **Real document ingestion run against live Azure**: `etl_agent.run_document_ingestion()`, no
+  fakes this time — real PDF fetch, real Azure OpenAI entity extraction, real embeddings, real
+  Azure AI Search upload. 11 documents → 411 chunks indexed (matches the earlier local
+  fake-verified run's count exactly).
+- **Live retrieval and synthesis verified directly against real data**, at three levels:
+  1. `search_server.hybrid_search()` — a general query correctly surfaced real CSSF FAQ content;
+     a fund-scoped query (after the filter fix) correctly returned both that fund's own KIID
+     chunks *and* general regulatory chunks, confirming the OR-shaped filter design works for real.
+  2. `evidence_agent.answer_with_evidence()` — first attempt (a compound "does this fund promote
+     E/S characteristics under SFDR" question) genuinely abstained: real vector search's top-5
+     results for that phrasing were all general CSSF guidance, none of the fund's own KIID
+     content, and the model correctly declined to make a fund-specific claim from only general
+     text rather than guessing — a real demonstration of the abstention guardrail doing its job
+     under real retrieval imperfection, confirmed as correct (not a bug) by re-running with a more
+     directly-answerable question, which produced a correctly multi-claim-cited real answer and a
+     real persisted `document_citations` row.
+  3. **The actual `POST /evidence` and `POST /ask` (multi_hop) HTTP routes**, local uvicorn
+     pointed at the now-live `.env` values, no mocks anywhere in the path: `/evidence` returned a
+     real cited answer with full document metadata (`entity_names`, `source_url`,
+     `@search.score`). The multi_hop request planned `["sql", "risk", "evidence"]`; the `sql` hop
+     hit a *real* pre-existing guardrail (`sql_agent`'s "multiple statements are not allowed"
+     rejection of the LLM-generated query for this compound question) and was correctly recorded
+     as a `hop_error` rather than crashing the chain; `risk` and `evidence` both succeeded; and
+     `synthesize()` correctly reused the evidence hop's own real, cited answer as `final_answer`.
+     This is the multi-hop mechanism's graceful-partial-failure behavior working exactly as
+     designed, discovered for real rather than only unit-tested.
+- **`.env` updated** with the four new live values (`AZURE_SEARCH_ENDPOINT`,
+  `AZURE_SEARCH_ADMIN_KEY`, `AZURE_SEARCH_QUERY_KEY`, `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`) for
+  continued local-against-live testing.
+
+**Deviations from the original plan:** (1) the full `main.bicep` deployment envisioned by the
+original plan wasn't run — scoped per-module deployments instead, for the Postgres-password-safety
+reason above; this means the Container App's own env vars (`AZURE_OPENAI_EMBEDDING_DEPLOYMENT`,
+`AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_INDEX_NAME`) and the two new Key Vault secrets
+(`azure-search-admin-key`, `azure-search-query-key`) are **not yet applied to the live Container
+App** — those specific commands are also classifier-blocked for direct execution, handed to the
+user, and still pending as of this entry. Everything else (the Azure resources themselves, the
+search index, the real document corpus in Azure AI Search, and the full application code path)
+is live and verified — what's outstanding is purely "point the already-deployed Container App at
+resources that already exist," not any remaining application logic. (2) `scripts/create_search_index.py`
+wasn't in the original plan's file list — a genuine gap the original plan didn't anticipate (Bicep
+provisions the search *service*, not an index *schema* within it).
+
+**Next step:** once the user runs the two `az keyvault secret set` calls and shares the Container
+App's current env var list (requested, not yet received as of this entry), give them the complete
+`az containerapp update` command (full existing list + 3 new vars, to avoid dropping anything) so
+the live Container App can serve `/evidence` and multi-hop requests over the internet, not just
+locally-against-live. After that, Phase 8 is fully complete end to end.
+
+---
+
+## Phase 8c + 8d — Multi-hop supervisor rewrite + UI/documentation pass
+
+**Completed:** 2026-08-09
+
+**Done:**
+- **8c — `agents/supervisor.py` rewritten for multi-hop orchestration**, the design sketched in
+  the original Phase 8 plan, now implemented and verified: `SupervisorState` gained `plan`,
+  `hop_results`, `hop_errors`, `trace`, `final_answer` (all optional, only populated for
+  `route == "multi_hop"`); a new `evidence` single-hop route (mirrors the other five); a new
+  `multi_hop` route wired as `plan_request()` (LLM picks an ordered subset of
+  `{sql, risk, evidence}`, falls back to `["evidence"]` on unparseable output — same
+  fallback-don't-raise philosophy as `route_request()`'s fallback to `"sql"`) →
+  `dispatch()` (runs exactly one un-run hop per call, loops via a conditional edge until the plan
+  is exhausted — provably terminates since `_MAX_HOPS=5` bounds the plan and each call shrinks the
+  un-run set by one) → `synthesize()` (reuses the `evidence` hop's own answer directly if the plan
+  included it, avoiding a duplicate call; otherwise flattens `sql`/`risk` hop output into
+  `evidence_agent.answer_with_evidence()`'s `precomputed_facts` shape). The six original
+  single-hop routes/edges are byte-for-byte unchanged, and the five dedicated per-agent REST
+  endpoints in `api/app.py` never touch this graph at all, so neither was at risk.
+- **8d — UI updated to match**: `ui/src/lib/agent-api.ts` gained `DocumentCitation`,
+  `EvidenceResultData`, and `evidence`/`multi_hop` route + `plan`/`hop_results`/`trace`/
+  `final_answer` fields on `AskResult`. `ui/src/components/ResultView.tsx` gained `EvidenceResult`
+  (answer, abstention badge, per-citation doc-type/source/excerpt) and `MultiHopResult` (a plan
+  stepper with per-hop ok/error badges, reusing `EvidenceResult` for the final synthesized
+  answer). `npx tsc --noEmit` and `npm run build` both clean.
+- **8d — full documentation pass**, the part 8a/8b deliberately deferred: CLAUDE.md decision #4's
+  reversal write-up (same restate-original/**Correction (Phase N)**/why/differentiation-paragraph
+  structure as decision #5's Phase 7 precedent), plus updates to decisions #5 and #6 for the two
+  new routes and the multi-hop mechanism; `ARCHITECTURE.md`'s agent graph diagram/table, MCP
+  server list, Agent API route table, data layer, Azure service map, and — the most identity-load-
+  bearing one — the differentiation-from-agentic-rag-lu table, rewritten to be honest that real
+  document-corpus and Azure-AI-Search overlap now exists, with the differentiation resting on
+  mechanism-of-use (fused quantitative+evidence synthesis via a fixed pipeline) and the deliberate
+  absence of graph construction, not on "we don't touch documents"; `DATA.md`'s new "Document
+  corpus (Phase 8)" section; `README.md`'s "Why this exists" section; `REQUIREMENTS_TRACEABILITY.md`'s
+  non-goals (marked **superseded**, not silently deleted, so the history of what changed and why
+  stays visible).
+- **Verified three ways**: (1) full pytest suite, 215 passed (190 existing + 25 new in
+  `test_supervisor.py`, zero regressions); (2) backend live-verified via a freshly restarted local
+  uvicorn — a real `/ask` risk-score request still works unchanged through the rewritten graph,
+  and a real compound question correctly LLM-classified as `multi_hop`, planned `["evidence"]`,
+  dispatched it, and failed at the exact expected point (the embedding call 404s — Azure AI Search
+  isn't deployed yet) with a clean structured error in the response body, not a crash; (3) UI
+  live-verified via real browser-equivalent multipart form POSTs against a running `npm run dev`
+  server (same technique as Phase 7's own verification — the real Server Action id extracted from
+  the rendered page, not a mock): an evidence-routed question correctly rendered the "Evidence
+  agent" label and the real error banner (no `EvidenceResult` render, correctly suppressed by the
+  `!error &&` guard), and a multi-hop-routed question correctly rendered the "Multi-hop
+  (supervisor-planned)" label, a "Plan" section with an `evidence` hop badge, and a "Synthesized
+  answer" section — proving the full plan/trace/final_answer wiring renders end to end, not just
+  type-checks.
+
+**Deviations from the original plan:** none of substance — 8c and 8d were built essentially as
+scoped in the Phase 8 plan and CLAUDE.md's decision #6 update. One small addition beyond the
+original scope: `run_evidence()` (a plain single-hop `evidence` route) wasn't explicitly called
+out in the original 8c design notes but was added as the natural counterpart to `/evidence`'s
+existing dedicated REST endpoint, so `/ask` can reach the Evidence Agent directly without forcing
+every evidence question through the heavier multi-hop planner.
+
+**Next step:** Phase 8e — live Azure deployment (Azure AI Search + the second OpenAI embedding
+deployment, real `az deployment group create`, a real `run_document_ingestion()` run against the
+live index, live-verification of `/evidence` and the `multi_hop` route with real retrieval
+quality). Everything up to this point has been built and verified against fakes/local
+infrastructure specifically so this is the only remaining step that touches real cloud spend.
+
+---
+
+## Phase 8a + 8b — Document evidence agent (CLAUDE.md decision #4 reversal)
+
+**Completed:** 2026-08-09
+
+**Done:**
+- **Reversed CLAUDE.md decision #4** ("No RAG / vector search over regulatory PDFs... that's the
+  core of agentic-rag-lu... don't add a vector store or start ingesting regulatory text corpora
+  here") at the user's explicit request, wanting the tool to answer complex questions by
+  combining tabular data with document evidence and abstaining when evidence is missing. The user
+  explicitly chose the heaviest, most literal option (Azure AI Search + full GraphRAG, same stack
+  named in the original decision) and to include general SFDR/CSSF text alongside fund-specific
+  documents — meaning real document-corpus overlap with agentic-rag-lu now exists, not just
+  mechanism overlap. **CLAUDE.md itself, ARCHITECTURE.md's differentiation table, DATA.md, and
+  README.md are NOT yet updated to record this reversal** — that write-up is explicitly deferred
+  to Phase 8d (see below), once the multi-hop supervisor work gives the fuller picture needed to
+  describe accurately why this still isn't "rebuilding agentic-rag-lu." Treat CLAUDE.md decision
+  #4's text as **stale/superseded** starting this entry, not as current guidance, until 8d lands.
+- **Dropped the Microsoft `graphrag` PyPI package mid-implementation** after a real, concrete
+  blocker: `graphrag-llm==3.1.1` (a `graphrag` sub-package) hard-pins `litellm==1.92.0`, which —
+  unlike every adjacent litellm version — ships **no Windows wheel at all**, only manylinux;
+  installing it forced a from-source build requiring a Rust toolchain (`cargo`) that isn't present
+  on this dev machine, and an auto-installer (`puccinialin`) failed to bootstrap one cleanly. The
+  user pointed at the sibling project agentic-rag-lu (already implements "GraphRAG") for guidance;
+  fetching it revealed **it doesn't use the Microsoft package either** — its GraphRAG is a
+  hand-rolled `build_fund_graph` step into Cosmos DB Gremlin + Azure AI Search, not the pip
+  library. The user then explicitly said not to just copy that approach reflexively either
+  ("maybe the approach taken there is not the most suitable for this case") — prompted an
+  independent reassessment: full graph construction + community detection earns its complexity on
+  large, heterogeneous corpora with non-obvious entity relationships (which is what agentic-rag-lu
+  actually has); this project's corpus is ~11 documents covering 5 known funds where the real
+  structure (which fund, which doc type, which regulation) is already known before ingestion
+  runs. **Landed on: lightweight LLM-based entity tagging (fund names/ISINs/regulation
+  references) per document via the existing Azure OpenAI chat model — the same call pattern every
+  other agent here already uses — stored as a searchable field in Azure AI Search, no graph
+  database, no community detection, no new fragile dependency.** This is a real, documented scope
+  decision, not a silent downgrade — see `etl/extract_document_entities.py`'s module docstring for
+  the full reasoning. `pyproject.toml` ended up with only `azure-search-documents` and `pypdf`
+  added; the `pandas` 3.x bump `graphrag` would have forced was reverted along with it.
+- **Document corpus: 11 real, individually live-verified PDFs** — every URL was checked with a
+  real HTTP GET (not assumed from a naming pattern) before being hardcoded into
+  `etl/fetch_fund_documents.py`, same due-diligence style as `fetch_verified_holdings.py`. 5
+  fund-level PRIIPS KIDs (one per verified ISIN — note: EU PRIIPS KIDs already carry the SFDR
+  summary for these Article 8 products, so there's no separate "SFDR pre-contractual annex" PDF
+  to fetch, contrary to the original plan's assumption) + 2 shared umbrella prospectuses (iShares
+  IV plc covers SUAS/SASU confirmed via Fidelity factsheet URLs, SUSW/MVEA by inference from the
+  same product-launch wave — not independently confirmed per-ISIN, flagged in the module
+  docstring rather than silently assumed; iShares VII plc covers CSSPX, confirmed via Yahoo
+  Finance) + SFDR Regulation (EU) 2019/2088 and RTS (EU) 2022/1288 (EUR-Lex — needed real
+  `Accept`/`Accept-Language` headers, otherwise EUR-Lex returns a 202 with an empty body) + CSSF
+  FAQ on SFDR + CSSF Circular 26/905 (the real underlying document behind the "2026 supervisory
+  priorities" DATA.md already cites conceptually).
+- **Found and fixed a real bug during the umbrella prospectus's own text extraction**: one
+  prospectus PDF extracts to 2.85M characters / 2907 chunks (a full multi-sub-fund legal document
+  covering dozens of funds this project doesn't track) — wildly outside this project's
+  deliberately-small-corpus philosophy (same spirit as `etl_agent._GLEIF_LOOKUP_LIMIT=25`). Added
+  `_MAX_DOCUMENT_CHARS = 60_000` in `extract_document_entities.py`, and made `extract_text()` stop
+  reading further PDF pages once the cap is hit rather than parsing the whole file and discarding
+  most of it (a real performance fix, not just a correctness one — cut extraction time from tens
+  of seconds to ~2s for that document).
+- **Found and fixed a second real bug** after the ingestion pipeline was already verified working:
+  `evidence_agent.answer_with_evidence()` returned `document_citations` in its response dict but
+  never actually **persisted** them to the new `document_citations` table — silently defeating the
+  table's entire purpose (a durable citation trail, per RESPONSIBLE_AI.md Principle 1) despite the
+  schema existing. Fixed by inserting one row per citation (`report_id` left NULL — linking into a
+  published report is still deferred) before the audit-log write; added
+  `tests/test_evidence_agent.py::test_document_citations_are_persisted` /
+  `test_abstained_answer_writes_no_citation_rows`, and re-verified live against local Postgres
+  that rows actually land.
+- New: `mcp_servers/search_server.py` (hybrid search, OR-shaped `isin`/`doc_type` filter — a
+  fund-specific question must retrieve both that fund's own docs and the general regulatory
+  corpus at once), `guardrails/grounding.py` (new RESPONSIBLE_AI.md Principle 5:
+  `document_grounded_or_abstained()` — cite a real retrieved doc id or abstain, added now rather
+  than deferred to 8d since the code already referenced it), `agents/evidence_agent.py`
+  (`retrieve_evidence()` / `answer_with_evidence()` — deliberately falls back to an explicit
+  abstention on a repeated guardrail failure rather than raising like `report_agent` does;
+  abstaining is this agent's own safe, correct outcome, not an error state), `POST /evidence`.
+  Infra authored (not deployed): `infra/modules/ai-search.bicep` (F0/free SKU), a second
+  embedding deployment in `openai.bicep`, a `document-corpus` container in `storage.bicep`, two
+  new Key Vault secrets (admin/query key split, least-privilege), new `config.py` fields —
+  `az bicep build` compiles clean. New `document_citations` Postgres table (`schema.sql`) — a
+  structurally distinct citation shape from `fund_reports.citations`' flat numeric array, kept
+  separate rather than crammed in.
+- **Verified four ways**: (1) full pytest suite, 190 passed (166 existing + 24 new, zero
+  regressions); (2) `etl_agent.run_document_ingestion()` run live against the real fetched PDFs,
+  real Azure OpenAI (entity extraction), and real local Postgres, with fakes only for the
+  not-yet-deployed Azure AI Search/embedding clients — 11 documents → 411 chunks, real extracted
+  entities (fund names, ISINs, index names, umbrella company), correct payload shape; (3)
+  `evidence_agent.answer_with_evidence()` run live against real Postgres + a real fund_id + real
+  Azure OpenAI chat calls (fake search client only): clean abstention with no crash on both empty
+  retrieval and a genuinely interpretive/comparative question the evidence didn't directly settle
+  (confirmed this is correct conservative model behavior, not a bug, by testing directly-
+  answerable questions against the identical evidence — those got correctly cited answers), and
+  confirmed `document_citations` rows actually land in Postgres; (4) the actual
+  `POST /evidence` route through a freshly restarted local uvicorn — reached real code end-to-end,
+  failed with a real `openai.NotFoundError` (embedding deployment doesn't exist yet) exactly as
+  expected given Phase 8e hasn't happened, and identically to how e.g. `/dashboard` would fail
+  without a live Power BI dataset — not a new inconsistency.
+
+**Deviations from the original plan:** (1) `graphrag` library dropped entirely, replaced with
+hand-rolled LLM entity tagging — see above, this is the big one. (2) Document count came in at 11,
+not the originally-estimated ~20-30 — every URL is individually live-verified rather than padded
+with unconfirmed guesses, and the SFDR pre-contractual annex turned out to already be embedded in
+the PRIIPS KID rather than a separate fetchable document. (3) `etl/` lives under
+`src/greenlux_sentinel/etl/`, not a top-level `etl/` as an earlier planning pass assumed — new
+modules were added in the right place, just flagging the correction. (4) RESPONSIBLE_AI.md's
+Principle 5 was added now, not deferred to 8d as originally scoped, to avoid a dangling doc
+reference from `grounding.py`'s own docstring.
+
+**Next step:** Phase 8c (multi-hop `supervisor.py` rewrite) is the natural next chunk — new
+`SupervisorState` fields (`plan`, `hop_results`, `hop_errors`, `trace`, `final_answer`), a
+`"multi_hop"` route, a planner node, and a dispatch-loop-then-synthesize graph shape, keeping the
+5 existing single-hop routes/edges untouched. Do this in its own pass, separate from 8d's UI/doc
+work — a botched supervisor rewrite risks regressing the 5 already-live routes. After 8c, 8d
+(UI + the full CLAUDE.md/ARCHITECTURE.md/DATA.md/README.md reversal write-up) and 8e (live Azure
+deployment, only on explicit go-ahead) remain.
+
+---
+
+## Report agent — fixed the `tool_sourced_numbers` guardrail false-positive
+
+**Completed:** 2026-08-09
+
+**Done:**
+- Root-caused the report-route guardrail rejection that Phase 7 verification had already
+  surfaced but not investigated (`docs/PROGRESS_LOG.md`'s Phase 7 entry below, "a real
+  `tool_sourced_numbers` guardrail rejection... surfaced as a clean red error banner instead of a
+  crash"). It was not LLM flakiness — it was **deterministic** for every scorable fund. Diagnosed
+  by reproducing `draft_report("0P00018CYB")` directly against the local stack
+  (`.venv` + docker Postgres/Cosmos) and inspecting exactly which numbers in the LLM draft the
+  guardrail flagged as unsourced.
+- **Bug 1 (the main one):** `report_agent.draft_report()`'s `citations` allow-list only ever
+  contained `risk_score` and the numeric `funds` row values. But `facts_text` (what the prompt
+  tells the LLM it may use) also includes `risk_result["explanation"]` — real per-holding weights
+  and ESG scores from `risk_agent.explain()`, genuinely tool-sourced from Cosmos this run. Those
+  numbers were never added to `citations`, so the guardrail rejected the LLM faithfully repeating
+  real data as if it were hallucinated. Fixed by extracting `explanation`'s numbers and folding
+  them into `citations` (`report_agent.py` ~line 165). Exposed the regex extraction
+  `guardrails/validators.py`'s `tool_sourced_numbers()` already did internally as a reusable
+  `extract_numbers(text) -> list[float]`, used by both.
+- **Bug 2 (found once Bug 1 was fixed and this one was still failing):** the fixed prompt
+  boilerplate `"(0-100, higher = bigger gap...)"` in `facts_text` isn't tool output at all — it's
+  a scale descriptor — but the LLM echoed it, and `_NUMBER_RE` parsed `"0-100"` as two numbers
+  (`0` and `-100`, the hyphen read as a minus sign), both unsourced. Reworded that line to
+  describe the scale without digits (`report_agent.py` ~line 168) rather than adding 0/100 as
+  permanent fake citations.
+- Added a regression test (`tests/test_report_agent.py::test_numbers_in_risk_explanation_are_citable`)
+  using a risk explanation with real numbers in it — the existing tests all used a numberless fake
+  explanation (`"driven by laggard holdings"`), which is why none of them caught this. Added
+  `tests/test_validators.py::TestExtractNumbers` for the new helper.
+- **Bug 3 (found after re-testing through the actual UI/API, not just the unit-level checks):**
+  every draft's `total_net_assets` figure showed as `[REDACTED]` in all three languages, in a
+  fund report generator where that number is exactly the kind of figure a report should state.
+  Root cause: `redact_pii()`'s `_PHONE_RE` matched any bare run of >=9 digits as phone-shaped,
+  and unformatted AUM figures (e.g. `4636430000`) are exactly that shape. Redaction ran *before*
+  the `tool_sourced_numbers` guardrail check, so the number's disappearance also silently defeated
+  the guardrail's ability to say anything about it. Fixed `_PHONE_RE` (`guardrails/validators.py`)
+  to require actual phone-style separators (dash/dot/space) between digit groups, e.g.
+  `+352-621-123-456`, rather than matching a bare digit run — this dataset has no real phone
+  numbers to protect against, so the narrower match has no known downside. Added
+  `tests/test_validators.py::test_leaves_unformatted_large_financial_figure_untouched`.
+- Verified three ways, twice (once per bug batch — Bugs 1-2, then Bug 3): (1) full pytest suite,
+  166 passed; (2) direct `draft_report("0P00018CYB")` call against live local Postgres/Cosmos —
+  real EN/FR/DE bodies, guardrail passes clean, no retry needed, AUM figure now present in the
+  text instead of `[REDACTED]`; (3) restarted the local uvicorn each time (it wasn't running
+  `--reload`, so it kept serving pre-fix bytecode across restarts) and re-ran the exact
+  `POST /ask` request the operator UI sends — same real result, confirmed through the actual API
+  path, not just the unit-level one.
+
+**Deviations from the original plan:** none — this is a bugfix within the already-built Phase 7
+scope, not a scope change. Not yet pushed/deployed to Azure per user instruction (verify locally
+first).
+
+**Next step:** none required for this fix. If/when the user's planned scope expansion is defined,
+pick that up next — this session had not yet reached that discussion when the report-agent bug
+was found via a diagnostic question and fixed instead.
+
+---
+
 ## Phase 7 — Operator UI (Next.js)
 
 **Completed:** 2026-08-09

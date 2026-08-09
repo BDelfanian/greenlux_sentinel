@@ -20,12 +20,14 @@ dependencies = [
     "azure-identity>=1.25.1,<2",
     "azure-keyvault-secrets>=4.10.0,<5",
     "azure-storage-blob>=12.24.0,<13",
+    "azure-search-documents>=12.0.0,<13",
     "pydantic-settings>=2.11.0,<3",
     "pandas>=2.3.3,<3",
     "scikit-learn>=1.7.2,<2",
     "httpx>=0.28.1,<1",
     "fastapi>=0.115.6,<1",
     "uvicorn[standard]>=0.34.0,<1",
+    "pypdf>=6.15.0,<7",
 ]
 
 [project.optional-dependencies]

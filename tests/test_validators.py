@@ -26,6 +26,14 @@ class TestToolSourcedNumbers:
         assert validators.tool_sourced_numbers(text, [1536.0]) is True
 
 
+class TestExtractNumbers:
+    def test_extracts_all_numbers(self):
+        assert validators.extract_numbers("NVDA (10.16% weight, ESG score 899)") == [10.16, 899.0]
+
+    def test_no_numbers_returns_empty(self):
+        assert validators.extract_numbers("no digits here") == []
+
+
 class TestRedactPii:
     def test_redacts_email(self):
         assert validators.redact_pii("contact jane@example.com") == "contact [REDACTED]"
@@ -39,4 +47,10 @@ class TestRedactPii:
 
     def test_leaves_plain_text_untouched(self):
         text = "This fund is domiciled in Luxembourg."
+        assert validators.redact_pii(text) == text
+
+    def test_leaves_unformatted_large_financial_figure_untouched(self):
+        """Regression test: a fund's AUM (e.g. total_net_assets) is a legitimate large plain
+        number with no phone-style separators and must not be swallowed as phone-shaped PII."""
+        text = "total net assets of 4636430000 USD"
         assert validators.redact_pii(text) == text

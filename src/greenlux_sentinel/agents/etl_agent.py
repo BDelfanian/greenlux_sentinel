@@ -24,6 +24,9 @@ from typing import TYPE_CHECKING, Any
 
 from greenlux_sentinel.db.audit import write_audit_log
 from greenlux_sentinel.etl import (
+    extract_document_entities,
+    fetch_fund_documents,
+    load_documents_search,
     load_esg_cosmos,
     load_funds_postgres,
     load_verified_holdings_cosmos,
@@ -33,7 +36,10 @@ if TYPE_CHECKING:
     import httpx
     import psycopg
     from azure.cosmos import ContainerProxy
+    from azure.search.documents import SearchClient
     from azure.storage.blob import ContainerClient
+    from langchain_core.language_models import BaseChatModel
+    from openai import AzureOpenAI
 
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "raw"
 _LANDING_CONTAINER_NAME = "landing"
@@ -229,6 +235,63 @@ def run_ingestion(
         conn.commit()
     finally:
         if owns_connections:
+            conn.close()
+
+    return summary
+
+
+_DEFAULT_DOCUMENT_CORPUS_DIR = Path(__file__).resolve().parents[3] / "data" / "raw" / "document_corpus"
+
+
+def run_document_ingestion(
+    corpus_dir: Path | None = None,
+    conn: psycopg.Connection | None = None,
+    search_client: SearchClient | None = None,
+    embedding_client: AzureOpenAI | None = None,
+    llm: BaseChatModel | None = None,
+) -> dict[str, Any]:
+    """Fetch + tag + index the Phase 8 document corpus (fetch_fund_documents.FUND_DOCUMENTS):
+    KIIDs/prospectuses for the 5 issuer-verified UCITS ETFs plus general SFDR/CSSF regulatory
+    PDFs. Same thin-orchestrator-over-real-loaders shape as run_ingestion() above -- the actual
+    fetch/extract/load logic lives in, and is unit-tested in, etl/fetch_fund_documents.py,
+    etl/extract_document_entities.py, etl/load_documents_search.py.
+
+    Manual-trigger only (no scheduled Functions timer -- see docs/PROGRESS_LOG.md's Phase 8a
+    entry): this corpus is near-static, unlike the daily Morningstar/GLEIF data run_ingestion()
+    refreshes. Returns a lineage summary; writes its own audit_log row (no per-stage loader here
+    writes its own the way run_ingestion()'s loaders do, since fetch/extract/load don't touch
+    Postgres individually).
+    """
+    corpus_dir = corpus_dir or _DEFAULT_DOCUMENT_CORPUS_DIR
+    documents = fetch_fund_documents.FUND_DOCUMENTS
+
+    owns_conn = conn is None
+    if owns_conn:
+        import psycopg
+
+        from greenlux_sentinel.config import get_settings
+
+        conn = psycopg.connect(get_settings().postgres_dsn)
+
+    try:
+        fetch_fund_documents.fetch_all(corpus_dir)
+        records = extract_document_entities.build_document_records(corpus_dir, documents, llm=llm)
+        chunks_indexed = load_documents_search.load(records, search_client=search_client, embedding_client=embedding_client)
+
+        summary = {
+            "documents_fetched": len(documents),
+            "chunks_indexed": chunks_indexed,
+        }
+        write_audit_log(
+            conn,
+            agent_name="etl_agent",
+            tool_name="run_document_ingestion",
+            input_summary=str(corpus_dir),
+            output_summary=str(summary),
+        )
+        conn.commit()
+    finally:
+        if owns_conn:
             conn.close()
 
     return summary

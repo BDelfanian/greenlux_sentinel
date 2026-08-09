@@ -46,7 +46,30 @@ without checking with the user first.
    (CSSF FAQs, EUR-Lex documents via Azure AI Search + GraphRAG). This project's multilingual
    layer (EN/FR/DE) is **agent-generated structured summaries**, not a retrieval corpus. Don't
    add a vector store or start ingesting regulatory text corpora here — that would duplicate the
-   other project's core mechanism.
+   other project's core mechanism. **Correction (Phase 8):** the user explicitly overrode this —
+   wanting the tool to answer complex questions by combining structured fund data with real
+   document evidence (fund disclosures, SFDR/CSSF regulatory text), synthesizing one answer, and
+   explicitly abstaining ("I don't know") when evidence is missing, which a structured-summary
+   layer alone can't do. The user chose the heaviest, most literal option — Azure AI Search, the
+   same service named in this decision — and to include general SFDR/CSSF text alongside
+   fund-specific documents, so there is now real document-corpus overlap with agentic-rag-lu, not
+   just mechanism overlap; differentiation no longer rests on "we don't touch this kind of data."
+   What still differentiates the two: **mechanism of use**, not the document set.
+   agentic-rag-lu answers open-ended questions via full GraphRAG (Microsoft's library was
+   evaluated and dropped — real Windows/Rust packaging blocker, and independently judged
+   overkill for an ~11-document corpus with no hidden entity structure to discover — replaced by
+   lightweight LLM entity tagging, see `etl/extract_document_entities.py`'s docstring) plus a
+   hand-rolled Cosmos DB **Gremlin** graph (that project's own actual implementation, confirmed by
+   reading it directly — also not the graphrag package) and free-form conversational RAG chat.
+   This project fuses that document evidence with structured quantitative fund analytics
+   (Postgres/Cosmos Tier 1/Tier 2 data) into **one synthesized, cited-or-abstaining answer**,
+   delivered through the fixed multi-hop LangGraph pipeline in decision #6, not a chat interface —
+   consistent with decision #3's Cosmos-stays-NoSQL/Core boundary (the new document index lives in
+   Azure AI Search, Cosmos usage here is untouched) and decision #5's existing framing of this
+   project's UI as a thin client over fixed specialist agents, never free-form chat. New agent:
+   `agents/evidence_agent.py`. New guardrail: `guardrails/grounding.py`
+   (docs/RESPONSIBLE_AI.md#principles, Principle 5). Full detail: docs/PROGRESS_LOG.md's
+   Phase 8a/8b/8c entries.
 
 5. **Operator UI: Next.js app calling the Agent API.** Originally "no chat frontend" (the concern
    was duplicating agentic-rag-lu's Next.js chat app over RAG). **Correction (Phase 7):** the user
@@ -60,9 +83,22 @@ without checking with the user first.
    result out. Lives in `ui/` (see that directory's own notes for the stack). Power BI + the
    generated report remain the primary *analyst-facing* deliverable; this UI is for
    driving/inspecting the agents directly, which is a different audience (developer/operator).
+   **Update (Phase 8b/8c):** two more routes joined the original five —
+   `evidence` (single-hop, `agents/evidence_agent.py`) and `multi_hop` (a supervisor-planned chain
+   of several specialists, see decision #6) — still no free-form chat, still one request in, one
+   structured result out, just a richer result shape for these two routes (`ResultView.tsx`'s
+   `EvidenceResult`/`MultiHopResult`).
 
 6. **Orchestration is LangGraph/LangChain/LangSmith,** not native OpenAI function-calling (which
    agentic-rag-lu uses). This is a hard project requirement, not a style preference.
+   **Update (Phase 8c):** `supervisor.py`'s graph gained a `multi_hop` route — a planner node
+   LLM-picks an ordered subset of `{sql, risk, evidence}`, a dispatch node runs them one at a
+   time (each hop's own try/except-and-record contract, never raising), then a synthesize node
+   calls `evidence_agent.answer_with_evidence()` with the gathered facts to produce one final
+   answer. This is supervisor-*planned* multi-hop orchestration, not free-form agent-to-agent
+   messaging (evaluated and explicitly rejected in favor of this — a planned pipeline keeps the
+   human-in-the-loop gates and audit trail in decision #7 exactly as tractable as the original
+   single-hop design). The six original single-hop routes/edges are completely untouched.
 
 7. **Human-in-the-loop gates:** required before (a) the report agent finalizes/publishes a
    report, and (b) the query-optimizer agent applies a schema change (e.g. creating an index) in
@@ -71,11 +107,15 @@ without checking with the user first.
 
 ## Repo map
 
-- `src/greenlux_sentinel/agents/` — LangGraph agent nodes (supervisor + specialists)
-- `src/greenlux_sentinel/mcp_servers/` — MCP tool servers (Postgres, Cosmos, Power BI, GLEIF)
-- `src/greenlux_sentinel/etl/` — ingestion scripts (Kaggle CSVs/JSON → Postgres/Cosmos)
+- `src/greenlux_sentinel/agents/` — LangGraph agent nodes (supervisor + specialists, incl.
+  `evidence_agent.py` since Phase 8b)
+- `src/greenlux_sentinel/mcp_servers/` — MCP tool servers (Postgres, Cosmos, Power BI, GLEIF,
+  `search_server.py`/Azure AI Search since Phase 8b)
+- `src/greenlux_sentinel/etl/` — ingestion scripts (Kaggle CSVs/JSON → Postgres/Cosmos; document
+  corpus fetch/tag/index → Azure AI Search since Phase 8a)
 - `src/greenlux_sentinel/ml/` — greenwashing-risk scoring model
-- `src/greenlux_sentinel/guardrails/` — output validators, PII redaction, tool-sourced-numbers enforcement
+- `src/greenlux_sentinel/guardrails/` — output validators, PII redaction, tool-sourced-numbers
+  enforcement, document-citation grounding (`grounding.py` since Phase 8b)
 - `src/greenlux_sentinel/db/` — SQL schema (fund tables + audit log table)
 - `src/greenlux_sentinel/bi/` — DAX/Power BI query templates used by the dashboard agent
 - `infra/` — Bicep IaC for the Azure resources
