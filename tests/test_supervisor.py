@@ -220,6 +220,28 @@ class TestDispatch:
         result = supervisor.dispatch({"plan": ["sql"], "hop_results": {"sql": {}}, "hop_errors": {}, "trace": []})
         assert result == {}
 
+    def test_evidence_hop_receives_facts_gathered_by_earlier_hops(self):
+        # Phase 9c fix: before this, the evidence hop ran in total isolation from ml_risk/risk's
+        # already-gathered facts -- a plan like ["ml_risk", "evidence"] could never produce an
+        # answer that actually combines the two, confirmed live (docs/PROGRESS_LOG.md).
+        ml_risk_result = {"composition_anomaly_score": 47.49, "composition_anomaly_tier": "Medium"}
+        with patch("greenlux_sentinel.agents.evidence_agent.answer_with_evidence", return_value={"answer": "ok"}) as m:
+            supervisor.dispatch(
+                {
+                    "request": "q",
+                    "fund_id": "F1",
+                    "plan": ["ml_risk", "evidence"],
+                    "hop_results": {"ml_risk": ml_risk_result},
+                    "hop_errors": {},
+                    "trace": [],
+                }
+            )
+        m.assert_called_once_with(
+            "q",
+            fund_id="F1",
+            precomputed_facts={"composition_anomaly_score": 47.49, "composition_anomaly_tier": "Medium"},
+        )
+
 
 class TestNextDispatchStep:
     def test_pending_hop_routes_to_dispatch(self):
@@ -373,6 +395,13 @@ class TestBuildGraph:
         assert final_state["final_answer"] == evidence_result
         # evidence was run as a plannable hop directly -- synthesize() must reuse it, not re-call.
         m.assert_called_once()
+        # Phase 9c fix: evidence's own drafting call must have received ml_risk's facts, not run
+        # in isolation from it.
+        m.assert_called_once_with(
+            "Is this fund's disclosed strategy consistent with its rating?",
+            fund_id="F1",
+            precomputed_facts={"composition_anomaly_score": 14.82, "composition_anomaly_tier": "Low", "ml_predicted_rating_bucket": "High"},
+        )
 
     def test_multi_hop_route_without_evidence_hop_still_synthesizes(self):
         llm = SequentialFakeLLM(["multi_hop", '["risk"]'])

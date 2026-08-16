@@ -159,13 +159,21 @@ def answer_with_evidence(
         conn = psycopg.connect(get_settings().postgres_dsn)
 
     try:
+        # isin resolution is decoupled from precomputed_facts (Phase 9c fix) -- previously these
+        # were mutually exclusive (`elif`), so a multi-hop call carrying both a fund_id AND
+        # sql/risk/ml_risk facts never looked up the fund's own isin, silently falling back to an
+        # UNSCOPED document search across the whole index instead of that fund's own KIID/
+        # prospectus. Confirmed live: the retrieved passages for a real fund+facts combination
+        # weren't reliably that fund's own documents -- see docs/PROGRESS_LOG.md's Phase 9c entry.
         isin: str | None = None
         facts: dict[str, Any] = {}
+        if fund_id:
+            isin, fund_facts = _fetch_fund_facts(fund_id, conn)
+            facts.update(fund_facts)
         if precomputed_facts is not None:
-            facts = precomputed_facts
-            isin = facts.pop("isin", None)
-        elif fund_id:
-            isin, facts = _fetch_fund_facts(fund_id, conn)
+            facts.update(precomputed_facts)
+            if "isin" in facts:
+                isin = facts.pop("isin")
 
         numeric_citations = [v for v in facts.values() if isinstance(v, (int, float)) and not isinstance(v, bool)]
 

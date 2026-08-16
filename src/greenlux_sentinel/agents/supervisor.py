@@ -282,7 +282,16 @@ def dispatch(state: SupervisorState) -> dict[str, Any]:
                 raise ValueError("ml_risk hop requires a fund_id in the initial state")
             result = ml_risk_agent.score_fund_composition(fund_id)
         else:  # "evidence" -- the only other _PLANNABLE_HOPS member
-            result = evidence_agent.answer_with_evidence(state["request"], fund_id=fund_id)
+            # Pass whatever sql/risk/ml_risk facts already ran earlier in this same plan (dispatch
+            # runs hops in plan order) so evidence's OWN drafting call can incorporate them -- not
+            # just synthesize()'s later fallback path. Before this fix, a plan like
+            # ["ml_risk", "evidence"] ran evidence in total isolation from ml_risk's result: since
+            # "evidence" ends up in hop_results either way, synthesize() just reused evidence's own
+            # answer verbatim, so a question explicitly asking to combine the two could never
+            # succeed -- confirmed live (docs/PROGRESS_LOG.md's Phase 9c entry).
+            result = evidence_agent.answer_with_evidence(
+                state["request"], fund_id=fund_id, precomputed_facts=_facts_from_hops(hop_results) or None
+            )
         hop_results[next_hop] = result
         trace.append({"hop": next_hop, "status": "ok"})
     except Exception as e:  # noqa: BLE001

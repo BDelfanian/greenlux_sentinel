@@ -74,6 +74,26 @@ class TestAnswerWithEvidence:
         assert result["abstained"] is False
         assert result["answer"] == "Supported claim [doc:kiid_1_0]."
 
+    def test_fund_id_and_precomputed_facts_together_still_resolve_isin(self):
+        # Phase 9c fix: these used to be mutually exclusive (elif), so a multi-hop call carrying
+        # both a fund_id AND hop-gathered facts (e.g. ml_risk's composition_anomaly_score) never
+        # looked up the fund's own isin, silently falling back to an unscoped document search.
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchone.return_value = ("IE00BYVJRR92", "Test Fund", "Equity", 5)
+        llm = SequentialFakeLLM(["Cited [doc:kiid_1_0] and the score is 47.49 [fact:composition_anomaly_score]."])
+
+        with (
+            patch("greenlux_sentinel.agents.evidence_agent.retrieve_evidence", return_value=_PASSAGES) as m,
+            patch("greenlux_sentinel.mcp_servers.postgres_server.write_audit_log"),
+        ):
+            result = evidence_agent.answer_with_evidence(
+                "Q?", fund_id="F1", conn=conn, llm=llm, precomputed_facts={"composition_anomaly_score": 47.49}
+            )
+
+        m.assert_called_once_with("Q?", isin="IE00BYVJRR92", search_client=None)
+        assert result["abstained"] is False
+
     def test_fund_id_resolves_isin_and_scopes_retrieval(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
@@ -145,6 +165,7 @@ class TestAnswerWithEvidence:
     def test_document_citations_are_persisted(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchone.return_value = ("IE00BYVJRR92", "Test Fund", "Equity", 5)
         llm = SequentialFakeLLM(["Cited [doc:kiid_1_0] and [doc:cssf_faq_0]."])
 
         with (

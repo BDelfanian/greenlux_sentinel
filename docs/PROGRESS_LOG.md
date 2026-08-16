@@ -45,13 +45,53 @@ live scenario: a fact-cited claim must be accepted, not abstained; one confirmin
 key that was never actually supplied still correctly fails) -- 255 tests total passing, `ruff
 check .` clean.
 
-**Deviations from the original plan:** none -- this was scoped exactly to the fix proposed
-(two-marker citation, not a broader guardrail rewrite), per the user's "sure, fix it."
+**Deviations from the original plan:** none for the fix itself -- scoped exactly to what was
+proposed (two-marker citation, not a broader guardrail rewrite), per the user's "sure, fix it."
 
-**Next step:** re-run the same live UI test (`0P0001EVL3` + the composition-anomaly question from
-Phase 9b, once this fix is deployed) to confirm the fix holds against the real live LLM, not just
-the fake-LLM unit tests -- not yet done as of this entry, since it requires another deploy-approve
-cycle. Also still open from Phase 9b: wiring `score_all_funds()` into `etl_agent.run_ingestion()`.
+**Re-deployed and re-tested live, and found a SECOND, deeper bug the citation fix alone didn't
+cover.** After redeploy, the exact same live UI test (`0P0001EVL3` + the composition-anomaly
+question) still abstained. Diagnosed by calling `_draft_answer()` directly (bypassing the
+guardrail) with the real Azure OpenAI deployment: the raw model output *did* correctly use
+`[fact:composition_anomaly_score]` when given the right facts+passages directly -- so the citation
+fix works. But the actual live multi-hop code path never gave the evidence hop those facts at all:
+
+- `supervisor.dispatch()`'s `evidence` branch called `evidence_agent.answer_with_evidence(request,
+  fund_id=fund_id)` with **no `precomputed_facts`** -- so when a plan is `["ml_risk", "evidence"]`,
+  the evidence hop drafts its answer using only basic Postgres facts (name/category/rating),
+  completely blind to `ml_risk`'s result. `synthesize()` then just reuses `hop_results["evidence"]`
+  verbatim (since `"evidence" in hop_results`), so the two were never actually combined -- a
+  pre-existing gap in Phase 8c's original multi-hop design, not something Phase 9b introduced, just
+  never exercised by a real cross-hop question until now.
+- Separately, `evidence_agent.answer_with_evidence()`'s isin resolution used `elif` between
+  `precomputed_facts` and `fund_id` -- so whenever precomputed_facts was given (the synthesize()
+  fallback path, or the fix below), the fund's own `isin` was never looked up, silently falling
+  back to an **unscoped** document search across the whole index instead of that fund's own
+  KIID/prospectus.
+
+**Fix**: `dispatch()`'s evidence branch now passes `precomputed_facts=_facts_from_hops(hop_results)`
+-- whatever sql/risk/ml_risk facts already ran earlier in the same plan (dispatch runs hops in plan
+order, so they're available by the time evidence's turn comes). `answer_with_evidence()`'s isin
+resolution is decoupled from precomputed_facts: fund_id (if given) always resolves isin + basic
+fund facts first, precomputed_facts merge in on top, and can still override isin explicitly if a
+caller supplies one. 3 more new tests -- 257 total passing, `ruff check .` clean.
+
+**Also found live (not a bug, a characteristic worth documenting)**: with both fixes in place, the
+*exact same* question still initially abstained on `0P0001EVL3` a third time -- this time because
+`hybrid_search()`'s relevance ranking for that specific, instruction-heavy question phrasing
+("First compute... Then look at... Synthesize...") didn't surface the fund's own KIID chunks in its
+top 5 results at all (confirmed directly: all 5 were generic SFDR/CSSF regulatory docs). A more
+natural, front-loaded phrasing -- "What does this fund's KIID say about ESG exclusions, and is that
+consistent with its composition-anomaly score from the ml_risk model?" -- reliably retrieves the
+real fund-specific KIID chunks and produces a correct, fully-grounded, non-abstained answer citing
+both `[doc:kiid_SASU_ie00bfnm3g45_2]`/`_3` and `[fact:composition_anomaly_score]`/
+`[fact:composition_anomaly_tier]` together, confirmed against the real deployed Azure OpenAI +
+Azure AI Search. Question phrasing measurably affects retrieval quality -- not something to "fix"
+in code, just worth knowing when writing example questions for the UI.
+
+**Next step:** wire `score_all_funds()` into `etl_agent.run_ingestion()` (still open from Phase 9b).
+Consider whether `_DRAFT_SYSTEM_PROMPT` should hint that a well-scoped, front-loaded question
+retrieves better than an instruction-heavy one, or whether that's better left as UI-facing guidance
+rather than a prompt change.
 
 ---
 
