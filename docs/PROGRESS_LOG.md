@@ -10,6 +10,75 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9d — close the four status-review recommendations, live end to end
+
+**Completed:** 2026-08-16
+
+**Done:** After a full documentation-consistency audit (previous entry) confirmed the project was
+in a genuinely closed state, the user asked "what's your recommendation to make it perfect, useful,
+and practical" — four recommendations were given (ETL wiring, category encoding, UI examples,
+README polish) and, on request, all four were implemented and live-verified this same session:
+
+- **`score_all_funds()` wired into `etl_agent.run_ingestion()`.** New `_score_composition_
+  anomalies(conn)` best-effort stage — a missing model artifact records an error in the run
+  summary instead of failing the rest of ingestion. Closes the one item Phase 9b left open.
+- **Category encoding added to the ML model — added, and honestly evaluated, not oversold.**
+  `category` (295 values, deferred since Phase 9) is now three leakage-safe features
+  (`CATEGORY_RATE_COLUMNS`: train-fold-only, Laplace-smoothed per-category claimed-rating rates,
+  `FeatureFitStats` replacing the old bare-medians API throughout). Real result: these three
+  features are individually the **most important in the whole model** (0.078/0.071/0.042, ahead of
+  `sector_energy` at 0.039), yet held-out accuracy moved from 90.9%/0.910 (no category) to
+  90.2%/0.904 (with category) — essentially flat, reported exactly as measured. Shipped anyway
+  (sound methodology, closes a documented gap), not spun as an accuracy win it didn't produce.
+  `MODEL_VERSION` bumped to `tier1-composition-anomaly-v2`. `notebooks/02_ml_model_worked_
+  example.ipynb` updated with a new category-encoding section and real per-category rate examples
+  (e.g. "Sector Equity Alternative Energy" funds claim High 94.8% of the time vs. 36.0%
+  population-wide) and re-executed end to end, no errors.
+- **Operator UI: "Try an example" chips.** `AskForm.tsx` now offers three pre-filled questions,
+  using phrasings confirmed live this session to route/retrieve reliably — directly addresses the
+  risk that a first-time visitor (e.g. a recruiter) lands on a cold-start abstention before ever
+  seeing the system's real capability. `npm run build` (Next.js + TypeScript) clean.
+- **README updated**: real Phase 9d accuracy figure, a new paragraph on the `ml_risk` multi-hop
+  combination capability, and (see below) a freshly re-captured demo GIF.
+
+**Deployed and live-verified, not just written:**
+- Deploy approved and completed successfully — `ca-greenlux-agents-dev` and `ca-greenlux-ui-dev`
+  both updated, health check green.
+- New model artifact (v2) uploaded to the ADLS Gen2 landing storage account.
+- Live Postgres re-scored with the new model via the same one-off script pattern as Phase 9b (user
+  supplied the Key Vault password + a temporary firewall rule again, both removed/cleaned up
+  immediately after) — **took much longer than the Phase 9b run** (~20+ minutes; confirmed via
+  `Get-Process` CPU-time sampling that it was genuinely computing, not hung — `score_all_funds()`
+  scores each of the 40,737 funds with an individual Python-level call, not vectorized, and the new
+  category-rate lookup adds a bit more per-row work). Wrote 40,737 new `tier1-composition-
+  anomaly-v2` rows; the prior `v1` rows were preserved (81,482 total), confirmed directly: the demo
+  fund's `v2` score (16.30) matches the local retraining exactly.
+- **Demo GIF re-captured against the real live deployment** (Playwright, browsers+ffmpeg already
+  present from an earlier session's capture work; PNG-frames-then-Pillow used for the actual GIF
+  encode since the Playwright-bundled ffmpeg build has no gif muxer). Two capture attempts, reported
+  honestly rather than silently redone until clean: the first hit the planner's own documented
+  nondeterminism (chose `evidence` alone for the example chip's question, abstained — real behavior,
+  not a new bug, just not usable as the flagship example); the second captured the intended
+  `ml_risk`+`evidence` combination with a real synthesized answer citing both `[doc:kiid_SASU_
+  ie00bfnm3g45_2]`/`_3` and `[fact:composition_anomaly_score]`/`[fact:composition_anomaly_tier]`/
+  `[fact:ml_predicted_rating_bucket]` together. Compressed from a 6MB naive per-frame-palette
+  encode down to 772KB via a shared quantized palette + frame sampling, verified legible by
+  extracting and visually inspecting the actual encoded GIF frames, not just the source PNGs.
+
+**Deviations from the original plan:** none structural. The live batch-scoring slowdown (above)
+and the GIF-capture retry (above) were both real, unplanned things surfaced by actually doing the
+work end to end rather than stopping at "code is written" — consistent with this project's
+established practice of live-verifying rather than assuming.
+
+**Next step:** none blocking — every recommendation from the status review is closed and
+live-verified. Genuinely open, lower-priority items carried forward unchanged: the LU-domiciled
+Tier 2 fund gap (needs a paid data provider or headless-browser scraping, not attempted) and
+`score_all_funds()`'s per-row scoring loop being slow at ~40k-row scale (works correctly, just not
+fast — vectorizing `ml.greenwashing_risk_model.score()` to batch-score a whole DataFrame at once
+instead of one row at a time would be the concrete fix, not attempted this pass).
+
+---
+
 ## Phase 9c — fix the fact-citation abstention gap found by live testing
 
 **Completed:** 2026-08-16

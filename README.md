@@ -130,24 +130,20 @@ See [CLAUDE.md](CLAUDE.md#decisions-that-must-not-be-quietly-reverted) decision 
 
 ## Demo
 
-![Operator UI demo: a multi-hop question against the live public deployment, combining a fund's Greenwashing Risk Score with what its KIID discloses, planning and chaining SQL/risk/evidence hops automatically, and producing one synthesized, cited answer with real document citations](docs/assets/demo.gif)
+![Operator UI demo: clicking a "Try an example" chip, asking a live public deployment what a fund's KIID discloses about ESG exclusions and whether that's consistent with its ML composition-anomaly score, and receiving one synthesized answer citing both a real KIID passage and the real model output](docs/assets/demo.gif)
 
-A real browser session (Playwright-captured, not staged) against the **live public operator UI**
-(`ca-greenlux-ui-dev`), which itself calls the live public Agent API: a compound question routes
-to the `multi_hop` supervisor path, plans and runs `sql` → `risk` → `evidence` (each with its own
-real success/failure — the plan doesn't assume every hop works), and the Evidence Agent produces
-one final answer citing the fund's actual KIID text via Azure AI Search, retrieved and grounded,
-not generated from memory. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#agent-graph-langgraph)
-for how the multi-hop pipeline works, or [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md) for the two
-real bugs (an Azure AI Search OData filter, a schema gap on live Postgres) found and fixed while
-getting this working end to end.
-
-**Since Phase 9**, the same `multi_hop` pipeline can also plan an `ml_risk` hop — the trained
-composition-anomaly classifier — alongside `evidence`, so a question can combine a document-cited
-claim with a real, quantified ML signal (e.g. `composition_anomaly_score: 47.49`) in one
-synthesized answer, both independently citation-validated (`[doc:<id>]` / `[fact:<key>]`). The
-operator UI's "Try an example" chips include a question confirmed to route and retrieve this way —
-see [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md)'s Phase 9c entry for the real transcript.
+A real browser session (Playwright-captured against the actual live deployment, not staged) against
+the **live public operator UI** (`ca-greenlux-ui-dev`), which itself calls the live public Agent
+API. Clicking the "ML signal + KIID" example chip submits a question that routes to the `multi_hop`
+supervisor path, plans and runs `ml_risk` (the trained Tier 1 composition-anomaly classifier) then
+`evidence`, and produces one final synthesized answer citing **both** a real KIID passage
+(`[doc:<id>]`, retrieved via Azure AI Search) and the real model output
+(`[fact:composition_anomaly_score]`/`[fact:composition_anomaly_tier]`) — two independently
+citation-validated forms, never conflated into one number. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#agent-graph-langgraph) for how the multi-hop pipeline
+works, or [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md)'s Phase 9b/9c entries for the real bugs
+(an Azure AI Search OData filter, a schema gap on live Postgres, the evidence hop originally
+running blind to earlier hops' facts) found and fixed while getting this working end to end.
 
 ## Deployment
 

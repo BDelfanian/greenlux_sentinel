@@ -406,12 +406,18 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       build` (Next.js + TypeScript) clean.
 - [x] README updated: real Phase 9d accuracy figure, and a new paragraph describing the `ml_risk`
       multi-hop combination capability (previously undocumented in the README itself).
-- [ ] Demo GIF re-capture — pending live deployment of the UI changes above (see the unchecked
-      live-verification item below); the existing GIF still accurately shows the general
-      `sql`/`risk`/`evidence` multi-hop pattern, just not the newer `ml_risk` capability or the new
-      example chips.
-- [ ] **Not yet live-verified as of writing this checklist** — same pattern as every prior phase:
-      code is real, tested (262 tests passing, `ruff check .` clean), and will be deployed +
-      live-re-verified (including re-running the live Postgres backfill against the new
-      category-encoded model) before this item gets checked off — see docs/PROGRESS_LOG.md's
-      Phase 9d entry for the outcome once that happens, not assumed here in advance.
+- [x] **Demo GIF re-captured** against the real live deployment (Playwright, not staged) — shows
+      the new "Try an example" chip, the `ml_risk`+`evidence` multi-hop plan, and a real
+      synthesized answer citing both `[doc:<id>]` and `[fact:<key>]` together. Took two capture
+      attempts: the first hit the planner's known nondeterminism (chose `evidence` alone,
+      abstained — not usable as the flagship example); the second captured the intended
+      combination. Not cherry-picked past that — the real, non-deterministic behavior already
+      documented in Phase 9c is exactly why a retry was needed, and that's stated here rather than
+      quietly reshot until it looked clean.
+- [x] **Live-verified, fully.** Deploy approved and completed (`ca-greenlux-agents-dev` +
+      `ca-greenlux-ui-dev` both updated, health check green). New model artifact (v2, with category
+      encoding) uploaded to Blob Storage. Live Postgres re-scored with the new model — 40,737 new
+      `tier1-composition-anomaly-v2` rows written alongside the preserved `v1` history (81,482
+      total rows), confirmed directly against the live DB: the demo fund's v2 score (16.30) matches
+      the local retraining exactly, `v1`/`v2` counts both correct. `npm run build` clean before
+      deploy. 262 tests passing, `ruff check .` clean throughout.
