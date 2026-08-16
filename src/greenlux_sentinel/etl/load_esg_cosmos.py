@@ -63,7 +63,10 @@ def transform(holdings: pd.DataFrame, esg: pd.DataFrame) -> list[dict[str, Any]]
     """Join holdings to company ESG ratings by ticker, one nested doc per ETF. Pure function."""
     esg_fields = list(_ESG_RAW_TO_INTERNAL.values())
     esg_indexed = esg.rename(columns=_ESG_RAW_TO_INTERNAL).assign(ticker=esg["ticker"].str.upper())
-    esg_indexed = esg_indexed.where(pd.notnull(esg_indexed), None)
+    # .astype(object) first -- a float64 column can't hold Python None (silently coerced back to
+    # NaN otherwise), which would then fail json.dumps() with an invalid-JSON NaN token; see
+    # load_funds_postgres.load()'s same fix for the confirmed-live version of this bug.
+    esg_indexed = esg_indexed.astype(object).where(pd.notnull(esg_indexed), None)
     esg_by_ticker = esg_indexed.set_index("ticker")[esg_fields].to_dict(orient="index")
 
     holdings = holdings.rename(

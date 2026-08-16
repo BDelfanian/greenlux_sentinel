@@ -153,7 +153,14 @@ def load(mutual_funds_csv: Path, etfs_csv: Path, conn: psycopg.Connection | None
     mutual_funds = transform(pd.read_csv(mutual_funds_csv, low_memory=False), "mutual_fund")
     etfs = transform(pd.read_csv(etfs_csv, low_memory=False), "etf")
     combined = pd.concat([mutual_funds, etfs], ignore_index=True)
-    records = combined.where(pd.notnull(combined), None).to_dict(orient="records")
+    # .astype(object) BEFORE .where() matters: a float64 column can't hold Python None -- pandas
+    # silently coerces an attempted None assignment back to NaN, so a plain
+    # `combined.where(pd.notnull(combined), None)` leaves float NaN in place for every numeric
+    # column (confirmed live: 14,411 LU funds had a literal NaN, not NULL, in Postgres'
+    # sustainability_rating, which poisoned NL2SQL AVG() queries -- IEEE754 NaN propagates through
+    # arithmetic, unlike NULL, which is simply excluded). Forcing object dtype first lets None
+    # actually be stored per-cell.
+    records = combined.astype(object).where(pd.notnull(combined), None).to_dict(orient="records")
 
     owns_conn = conn is None
     if owns_conn:
