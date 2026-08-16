@@ -168,7 +168,11 @@ Vault read) than what was agreed. Infra changes stay a manual `az deployment gro
 
 - **Agentic:** LangGraph (orchestration), LangChain (tools/chains), LangSmith (tracing/eval), MCP (tool servers)
 - **Data:** Azure Database for PostgreSQL Flexible Server, Azure Cosmos DB (NoSQL/Core API)
-- **ML:** greenwashing-risk scoring model (holdings-vs-claim consistency)
+- **ML:** greenwashing-risk scoring model — a Tier 2 holdings-vs-claim consistency formula (4
+  issuer-verified funds) plus a trained scikit-learn `RandomForestClassifier` (Tier 1, ~41k funds,
+  group-split accuracy 90.9%/macro-F1 0.910) flagging claimed sustainability ratings that look
+  atypical for a fund's objective portfolio composition — see
+  [docs/DATA.md](docs/DATA.md#tier-1-composition-anomaly-model-ml)
 - **BI:** Power BI, agent-driven dynamic report/dataset queries (not static dashboards)
 - **Cloud:** Microsoft Azure (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#azure-service-map) for the full service list)
 - **Language:** Python 3.12

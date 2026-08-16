@@ -105,6 +105,26 @@ without checking with the user first.
    Postgres. Read-only agent actions (analysis, dashboard queries) run autonomously. Don't remove
    these gates for convenience — see [docs/RESPONSIBLE_AI.md](docs/RESPONSIBLE_AI.md).
 
+8. **`ml/greenwashing_risk_model.py` is a real, trained classical ML model (Phase 9) — the first
+   non-LLM learned model in the system,** not the unimplemented stub it was through Phase 8. It
+   predicts a fund's own REAL, existing claimed `sustainability_rating` bucket (Low/Medium/High)
+   from 41 OBJECTIVE Tier 1 portfolio-composition columns (sector/asset-class/market-cap/
+   credit-quality/controversial-business-involvement — newly loaded onto `funds`, see
+   `etl/load_funds_postgres.COMPOSITION_COLUMNS`), deliberately excluding the claimed-side E/S/G
+   subscores to avoid circularity. Its own `predict_proba` gives a
+   `composition_anomaly_score`/tier signal, written to the new `fund_sustainability_anomaly_scores`
+   table. **This still respects decision #1** — it predicts a real Morningstar field, not a
+   fabricated greenwashing/SFDR label. **It is a different, coarser signal from decision #2's Tier
+   2 `compute_gap()`, not a replacement for it** — Tier 1 breadth (~41k funds, population-relative
+   composition normality) vs. Tier 2 depth (4 funds, real security-level holdings-vs-claim gap);
+   the two are not expected to agree, and a worked example where they don't is documented in
+   [docs/DATA.md](docs/DATA.md#tier-1-composition-anomaly-model-ml) and
+   `notebooks/02_ml_model_worked_example.ipynb`. Not wired into `etl_agent.run_ingestion()`, a new
+   LangGraph agent node, or a new API route this pass — deliberately scoped down; see
+   docs/PROGRESS_LOG.md's Phase 9 entry. Not live-Postgres-verified as of Phase 9 (no Azure
+   Postgres credentials available in that session) — trained/evaluated against the local
+   `data/raw/*.csv` files only.
+
 ## Repo map
 
 - `src/greenlux_sentinel/agents/` — LangGraph agent nodes (supervisor + specialists, incl.
@@ -113,7 +133,10 @@ without checking with the user first.
   `search_server.py`/Azure AI Search since Phase 8b)
 - `src/greenlux_sentinel/etl/` — ingestion scripts (Kaggle CSVs/JSON → Postgres/Cosmos; document
   corpus fetch/tag/index → Azure AI Search since Phase 8a)
-- `src/greenlux_sentinel/ml/` — greenwashing-risk scoring model
+- `src/greenlux_sentinel/ml/` — greenwashing-risk scoring model. Since Phase 9:
+  `greenwashing_risk_model.py` (the real trained classifier + scoring logic),
+  `train_greenwashing_risk_model.py` (runnable training entry point), `artifacts/` (gitignored
+  model artifact, train-on-demand)
 - `src/greenlux_sentinel/guardrails/` — output validators, PII redaction, tool-sourced-numbers
   enforcement, document-citation grounding (`grounding.py` since Phase 8b)
 - `src/greenlux_sentinel/db/` — SQL schema (fund tables + audit log table)

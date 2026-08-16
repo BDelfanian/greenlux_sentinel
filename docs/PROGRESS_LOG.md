@@ -10,6 +10,92 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9 — Tier 1 composition-anomaly ML model
+
+**Completed:** 2026-08-16
+
+**Done:**
+- **Replaced `ml/greenwashing_risk_model.py`'s unimplemented stub with a real, trained classical
+  ML model** — the project's first non-LLM learned model. A `RandomForestClassifier` predicts each
+  fund's own *real, existing* claimed `sustainability_rating` bucket (Low/Medium/High) from 41
+  *objective* portfolio-composition columns (sector allocation, asset-class mix, market-cap tiers,
+  credit-quality tiers, controversial-business-involvement percentages), deliberately excluding
+  the claimed-side E/S/G subscores to avoid circularity. Its `predict_proba` output gives a
+  `composition_anomaly_score`/tier signal via `1 - P(actual bucket)`.
+- **Schema/ETL**: `db/schema.sql` gained the 41 composition columns on `funds` (additive) plus a
+  new `fund_sustainability_anomaly_scores` table; `etl/load_funds_postgres.py`'s `RAW_COLUMN_MAP`/
+  `_NUMERIC_COLUMNS`/`_COLUMN_ORDER` extended via a shared `COMPOSITION_COLUMNS` list (also reused
+  as `ml/greenwashing_risk_model.FEATURE_COLUMNS`, so the two can't drift apart). Fixture CSVs
+  (`tests/fixtures/morningstar_*_sample.csv`) extended with realistic values matching the real
+  equity-vs-bond structural missingness pattern (confirmed via crosstab: `credit_*` present ≈ bond
+  fund, `sector_*`/`market_cap_*` present ≈ equity fund).
+- **Real numbers, from actually running the shipped code** against the real local
+  `data/raw/morningstar_european_{mutual_funds,etfs}.csv` (67,098 funds; 40,737 with a claimed
+  rating) via `python -m greenlux_sentinel.ml.train_greenwashing_risk_model`, `GroupShuffleSplit`
+  grouped by ISIN (not a naive row split — ~6% of ISINs have multiple share-class rows, which a
+  naive split leaks across train/test; measured inflation ~2 accuracy points, reproduced live in
+  the notebook below):
+  - **Classification: accuracy 90.9%, macro-F1 0.910** vs. a 38.4% most-frequent-class baseline;
+    confusion matrix diagonal-dominant across Low/Medium/High, no collapsed class.
+  - Top feature importances (market_cap_small, market_cap_giant, sector_energy,
+    involvement_thermal_coal, sector_technology, involvement_animal_testing) are intuitively sane
+    real ESG-score drivers — a sanity check the model learned signal, not noise.
+  - Model artifact: `ml/artifacts/greenwashing_rating_classifier.joblib`, ~11MB compressed
+    (`joblib.dump(..., compress=3)`), gitignored (train-on-demand, same convention as
+    `data/raw/*`).
+- **Real, non-cherry-picked worked example**: `notebooks/02_ml_model_worked_example.ipynb`,
+  executed end to end (`jupyter nbconvert --execute --inplace`, real output cells, not typed-in
+  numbers). Walks through `0P00018CYB` (iShares MSCI USA SRI UCITS ETF, the same fund already used
+  in the live-verified Phase 7/8 demo) — Tier 1 composition-anomaly score **14.82 (Low tier)** —
+  then cross-checks against Tier 2's real `risk_agent.compute_gap()` for the same fund (reusing
+  `load_verified_holdings_cosmos.load_raw_holdings()`/`transform()` directly against the local
+  `data/raw/verified_holdings/*.csv`, no live Cosmos needed) — **53.03**
+  (`holdings_implied_esg=1039.64`, matching the number already documented from the live-verified
+  Phase 7 UI run). **The two signals do not agree**, and the notebook + DATA.md explain in detail
+  why that's the expected, correct result (population-relative composition normality vs. real
+  security-level holdings-vs-claim gap) rather than a bug — this is the single most important
+  intuition-building point from this phase.
+- **Existing-agent integration**: `agents/sql_agent.py`'s `_SCHEMA_DDL` now includes
+  `fund_sustainability_anomaly_scores`, so the existing NL2SQL agent can already answer questions
+  like "which funds have a High composition-anomaly tier" — no new agent node or API route added.
+- **Tests**: 19 new (2 in `test_etl_transforms.py`, 16 in the new `test_ml_greenwashing_risk_model.
+  py`, 1 in `test_sql_agent.py`) — 234 total passing, `ruff check` clean.
+- Full documentation pass: CLAUDE.md (new decision #8), DATA.md (new "Tier 1 composition-anomaly
+  model (ML)" section), ARCHITECTURE.md, REQUIREMENTS_TRACEABILITY.md, RESPONSIBLE_AI.md (extended
+  Principle 3 + a new "what this isn't claiming" note), ROADMAP.md, README.md.
+
+**Deviations from the original plan:**
+- The user's original ask ("Random Forest, classification, whatever fits") was evaluated rather
+  than taken literally as "predict greenwashing directly" — no free dataset carries a real
+  greenwashing/SFDR label (decision #1), and Tier 2's only genuine holdings-based signal covers
+  just 4 funds, far too small to train/evaluate a classifier credibly. The shipped design instead
+  predicts a *real* Morningstar field (claimed rating bucket) from objective Tier 1 composition —
+  respects decision #1, and gives a real ~41k-fund train/test population.
+- An initial idea to train a *second* classifier on quantile-bins of the first model's own
+  residual (to give a literal second "classification model") was considered and rejected as
+  near-tautological — same features, target derived from the first model's own output. The single
+  shipped classifier's `predict_proba` already gives the anomaly signal directly.
+- **No live Postgres/Cosmos credentials were available in this session** (consistent with prior
+  memory: Key Vault secret reads are blocked here). The schema/loader changes are real code, but
+  have only been trained/evaluated against the local, gitignored `data/raw/*.csv` files — not run
+  against live Azure Postgres. `score_all_funds()` (batch-scoring + persistence) exists and is
+  unit-tested but has not written a single live row.
+- Deliberately **not** wired into `etl_agent.run_ingestion()`, a new LangGraph agent node, or a new
+  API route this pass — none of the user's four literal asks (implement + validate the model,
+  build intuition via a worked example, keep docs current) required it, and adding it would have
+  meant unverified changes to the live-deployed ETL/API surface without the credentials to check
+  them.
+
+**Next step:** once Azure Postgres credentials are available, run `load_funds_postgres.load()`
+(to backfill the 41 new columns on the live `funds` table) then
+`train_greenwashing_risk_model.main()` + `score_all_funds(result, df, conn)` against live Postgres,
+and update ROADMAP.md's unchecked Phase 9 item. After that, consider wiring
+`score_all_funds()` into `etl_agent.run_ingestion()` so the signal refreshes on the same daily
+timer trigger as the rest of Tier 1, and consider the deferred per-category peer-normalization
+follow-up noted in DATA.md.
+
+---
+
 ## Portfolio polish — live operator UI deployment + real demo GIF
 
 **Completed:** 2026-08-09

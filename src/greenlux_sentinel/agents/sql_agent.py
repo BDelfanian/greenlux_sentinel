@@ -45,6 +45,20 @@ CREATE TABLE fund_risk_scores (
 -- ESG profile. Only populated for a small set of funds with verified real holdings data --
 -- most rows in `funds` will have no matching row here.
 
+CREATE TABLE fund_sustainability_anomaly_scores (
+    fund_id TEXT REFERENCES funds(fund_id), predicted_rating_bucket TEXT NOT NULL,
+    actual_rating_bucket TEXT NOT NULL, composition_anomaly_score NUMERIC NOT NULL,
+    composition_anomaly_tier TEXT NOT NULL, model_version TEXT NOT NULL, computed_at TIMESTAMPTZ
+);
+-- A different, ML-based signal from fund_risk_scores above -- NOT the same thing and the two
+-- need not agree. composition_anomaly_score (0-100, higher = more atypical) compares a fund's
+-- claimed sustainability_rating against what a RandomForestClassifier expects from its OBJECTIVE
+-- portfolio composition (sector/asset-class/credit-quality/controversial-business-involvement
+-- mix), learned from the broad ~41k-fund population -- not from real security-level holdings like
+-- fund_risk_scores. predicted_rating_bucket/actual_rating_bucket are 'Low'|'Medium'|'High'.
+-- composition_anomaly_tier is the same 'Low'|'Medium'|'High' vocabulary but for the anomaly score
+-- itself, not the rating.
+
 CREATE TABLE lu_legal_entities (
     lei TEXT PRIMARY KEY, legal_name TEXT NOT NULL, entity_legal_form TEXT,
     entity_status TEXT, country TEXT, fetched_at TIMESTAMPTZ

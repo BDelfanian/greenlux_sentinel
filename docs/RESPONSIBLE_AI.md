@@ -13,7 +13,15 @@
 3. **The risk score is presented as a proxy indicator, never as a compliance finding.** Every
    surface that shows the Greenwashing Risk Score (dashboard, report) must carry the methodology
    caveat from [DATA.md](DATA.md#ground-truth-methodology). This is a guardrail on the *content*,
-   not just the *process*.
+   not just the *process*. **Since Phase 9**, this also covers `ml/greenwashing_risk_model.py`'s
+   composition-anomaly score — a different, ML-based signal from the same-named risk score, with
+   its own `CAVEAT` string carrying the equivalent framing ("data-driven proxy... not a
+   determination of greenwashing, SFDR non-compliance, or any other regulatory/legal finding") and
+   an explicit note that it's a coarser, population-relative signal, not a substitute for the
+   holdings-based one. Unlike Principle 2's black-box LLM outputs, this model is **interpretable
+   by construction** — `train()` returns real feature importances and a full held-out metrics
+   report (accuracy, macro-F1, per-class precision/recall, confusion matrix), not just a score —
+   so its behavior can be audited directly, not just its outputs validated after the fact.
 4. **PII redaction.** Any free-text fields ingested (e.g. company descriptions) pass through a
    redaction step before being stored or surfaced, even though the datasets in use are
    company/fund-level, not individual-level — defensive by default.
@@ -52,3 +60,7 @@ This is a portfolio-scale demonstration of Responsible AI patterns (logging, too
 grounding, human approval gates), not a production compliance system and not a legal
 determination of greenwashing or SFDR non-compliance for any real fund. Say this explicitly in
 the README and in the generated report template.
+
+The Phase 9 composition-anomaly model is a portfolio-scope evaluation, not a governed production
+ML system: no drift monitoring, no scheduled retraining pipeline, and (as of Phase 9) no live
+Postgres run — trained and evaluated against the local `data/raw/*.csv` files only.

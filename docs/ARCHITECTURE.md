@@ -85,7 +85,14 @@ separate call.
 See [DATA.md](DATA.md) for the full dataset breakdown. In short:
 
 - **Azure Database for PostgreSQL Flexible Server** — the ~67k-row Morningstar European Funds
-  table (breadth: BI + agentic SQL live here) plus the audit-log table.
+  table (breadth: BI + agentic SQL live here) plus the audit-log table. Since Phase 9, `funds`
+  also carries 41 objective portfolio-composition columns (sector/asset-class/market-cap/
+  credit-quality/controversial-business-involvement) that feed `ml/greenwashing_risk_model.py`,
+  and a new `fund_sustainability_anomaly_scores` table holds that model's output — a different,
+  Tier-1-breadth ML signal from `fund_risk_scores`' Tier-2 holdings-based gap, not a replacement
+  for it (see [DATA.md](DATA.md#tier-1-composition-anomaly-model-ml)). Already queryable via the
+  existing NL2SQL agent (`sql_agent.py`'s `_SCHEMA_DDL` includes the new table) — no new agent
+  node or API route was added for it this pass.
 - **Azure Cosmos DB (NoSQL/Core API)** — nested JSON documents: ETF holdings joined to
   company-level ESG ratings (depth: the risk model runs here). **Not** the Gremlin API — see
   [CLAUDE.md](../CLAUDE.md) for why that distinction matters.

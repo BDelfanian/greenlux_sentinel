@@ -5,7 +5,7 @@ check scope drift — if an implementation choice can't point to a row here, ask
 
 | # | Requirement | How it's satisfied |
 |---|---|---|
-| 1 | Agentic theme combining 3+ of {ML, BI, ETL} | Four: agentic ETL (ETL Agent), ML (greenwashing-risk model), agentic BI (Dashboard Agent + dynamic Power BI), agentic query/analytics (NL2SQL + Query-Optimizer agents) |
+| 1 | Agentic theme combining 3+ of {ML, BI, ETL} | Four: agentic ETL (ETL Agent), ML (greenwashing-risk model — since Phase 9 a real trained `RandomForestClassifier`, not just the Tier 2 hand-written formula: group-split accuracy 90.9%/macro-F1 0.910 against the real ~67k-fund population, see [DATA.md](DATA.md#tier-1-composition-anomaly-model-ml)), agentic BI (Dashboard Agent + dynamic Power BI), agentic query/analytics (NL2SQL + Query-Optimizer agents) |
 | 2 | LangChain / LangGraph / LangSmith | Supervisor + specialist agents built as a LangGraph graph; LangChain for tool/chain wiring; LangSmith for tracing every run |
 | 3 | MCP implementation | Five MCP servers: Postgres, Cosmos, Power BI, GLEIF, Azure AI Search (Phase 8) — see [ARCHITECTURE.md](ARCHITECTURE.md#mcp-servers) |
 | 4 | Deployed on Microsoft Azure | Full service map in [ARCHITECTURE.md](ARCHITECTURE.md#azure-service-map) |

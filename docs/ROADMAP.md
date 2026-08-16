@@ -275,3 +275,35 @@ step — see below and docs/PROGRESS_LOG.md's top entry.
 hung indefinitely waiting for an interactive UAC elevation prompt this non-interactive session
 can't answer, so a portable (installer-free) Node.js zip was downloaded and extracted to
 `C:\tools\node-v24.19.0-win-x64` and added to the user `PATH` instead — see docs/PROGRESS_LOG.md.
+
+## Phase 9 — Tier 1 composition-anomaly ML model
+
+- [x] `db/schema.sql`: 41 objective portfolio-composition columns added to `funds` (additive, no
+      prior decision violated) + new `fund_sustainability_anomaly_scores` table
+- [x] `etl/load_funds_postgres.py`: loader extended to map the 41 new columns
+      (`COMPOSITION_COLUMNS`); fixture CSVs + `test_etl_transforms.py` extended to cover them
+- [x] `ml/greenwashing_risk_model.py`: real implementation replacing the Phase 0-8 stub — a
+      `RandomForestClassifier` predicting a fund's real claimed rating bucket from objective
+      composition, `GroupShuffleSplit`-by-ISIN evaluation, `composition_anomaly_score`/tier via
+      `predict_proba`, `save_model`/`load_model`. 16 new unit tests
+      (`tests/test_ml_greenwashing_risk_model.py`), all pure/no-DB
+- [x] `ml/train_greenwashing_risk_model.py`: runnable training entry point + `score_all_funds()`
+      batch-scoring path (not yet called from anywhere — see below). **Run for real against the
+      local `data/raw/*.csv` files (67,098 funds)**: group-split accuracy 90.9%, macro-F1 0.910 vs.
+      a 38.4% baseline — see [DATA.md](DATA.md#tier-1-composition-anomaly-model-ml) for full
+      metrics and the honest naive-vs-group-split comparison
+- [x] `agents/sql_agent.py`: `fund_sustainability_anomaly_scores` added to `_SCHEMA_DDL` — the
+      existing NL2SQL agent can already query this signal, no new agent/route needed
+- [x] `notebooks/02_ml_model_worked_example.ipynb`: methodology walkthrough, real metrics, a
+      concrete fund walkthrough (`0P00018CYB`) plus a contrasting flagged fund, and the Tier
+      1-vs-Tier 2 cross-check — executed end to end against real data, not hand-typed numbers
+- [x] Full documentation pass: CLAUDE.md (new decision #8), DATA.md (new section), ARCHITECTURE.md,
+      REQUIREMENTS_TRACEABILITY.md, RESPONSIBLE_AI.md, README.md
+- [ ] **Not done — wire into `etl_agent.run_ingestion()` and run `train_greenwashing_risk_model.
+      main()` + `score_all_funds()` against live Azure Postgres.** No live Postgres/Cosmos
+      credentials were available in the session that built this phase — the schema/loader/model
+      code is real and unit-tested, but has only been trained/evaluated against the local,
+      gitignored `data/raw/*.csv` files, matching the honesty pattern Phase 1 used for the same
+      situation. Also not done this pass, by deliberate scope choice: a new LangGraph agent node
+      or API route surfacing this signal directly (it's reachable today only via the NL2SQL agent
+      once live data exists).

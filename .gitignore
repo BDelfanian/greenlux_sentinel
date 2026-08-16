@@ -22,6 +22,11 @@ data/processed/*
 # Notebooks checkpoints
 .ipynb_checkpoints/
 
+# Trained ML model artifacts (train-on-demand via ml/train_greenwashing_risk_model.py,
+# same convention as data/raw/* — not committed)
+src/greenlux_sentinel/ml/artifacts/*
+!src/greenlux_sentinel/ml/artifacts/.gitkeep
+
 # Azure / IaC
 .azure/
 *.tfstate

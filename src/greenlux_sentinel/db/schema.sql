@@ -4,6 +4,9 @@
 -- sharpe/treynor/alpha/beta in the real Morningstar export; no management_company or
 -- domicile columns either, both derived in etl/load_funds_postgres.py). Do not add an
 -- "sfdr_article" column — see docs/DATA.md#ground-truth-methodology.
+-- Phase 9 added the objective portfolio-composition columns on `funds` (sector/asset/market-cap/
+-- credit/involvement) and the fund_sustainability_anomaly_scores table — see that table's own
+-- comment and docs/DATA.md's Tier 1 composition-anomaly model section.
 
 CREATE TABLE IF NOT EXISTS funds (
     fund_id                 TEXT PRIMARY KEY,       -- Morningstar `ticker` (an internal fund/share-class ID, not a market ticker)
@@ -27,6 +30,56 @@ CREATE TABLE IF NOT EXISTS funds (
     return_10y               NUMERIC,
     quarters_up               INTEGER,
     quarters_down             INTEGER,
+
+    -- Objective portfolio-composition facts (Phase 9, ml/greenwashing_risk_model.py) — sector/
+    -- asset-class/market-cap/credit-quality allocation and controversial-business-involvement
+    -- percentages from the raw Morningstar export. Independent of the claimed-side columns above
+    -- (sustainability_rating/score, environmental_score/social_score/governance_score) — these are
+    -- what the fund's portfolio actually IS, not what it claims. Deliberately excluded from the ML
+    -- model's own feature set: environmental_score/social_score/governance_score above (using them
+    -- to predict sustainability_rank would be circular, since they're the same claimed signal).
+    asset_stock              NUMERIC,
+    asset_bond               NUMERIC,
+    asset_cash               NUMERIC,
+    asset_other              NUMERIC,
+    sector_basic_materials         NUMERIC,
+    sector_consumer_cyclical       NUMERIC,
+    sector_financial_services      NUMERIC,
+    sector_real_estate             NUMERIC,
+    sector_consumer_defensive      NUMERIC,
+    sector_healthcare               NUMERIC,
+    sector_utilities                 NUMERIC,
+    sector_communication_services     NUMERIC,
+    sector_energy                      NUMERIC,
+    sector_industrials                  NUMERIC,
+    sector_technology                    NUMERIC,
+    market_cap_giant          NUMERIC,
+    market_cap_large          NUMERIC,
+    market_cap_medium         NUMERIC,
+    market_cap_small          NUMERIC,
+    market_cap_micro          NUMERIC,
+    credit_aaa                NUMERIC,
+    credit_aa                 NUMERIC,
+    credit_a                  NUMERIC,
+    credit_bbb                NUMERIC,
+    credit_bb                 NUMERIC,
+    credit_b                  NUMERIC,
+    credit_below_b            NUMERIC,
+    credit_not_rated          NUMERIC,
+    involvement_abortive_contraceptive  NUMERIC,
+    involvement_alcohol                  NUMERIC,
+    involvement_animal_testing            NUMERIC,
+    involvement_controversial_weapons      NUMERIC,
+    involvement_gambling                    NUMERIC,
+    involvement_gmo                          NUMERIC,
+    involvement_military_contracting          NUMERIC,
+    involvement_nuclear                        NUMERIC,
+    involvement_palm_oil                        NUMERIC,
+    involvement_pesticides                       NUMERIC,
+    involvement_small_arms                        NUMERIC,
+    involvement_thermal_coal                       NUMERIC,
+    involvement_tobacco                             NUMERIC,
+
     ingested_at             TIMESTAMPTZ DEFAULT now()
 );
 
@@ -39,6 +92,26 @@ CREATE TABLE IF NOT EXISTS fund_risk_scores (
     holdings_implied_esg    NUMERIC NOT NULL,
     explanation             TEXT,
     computed_at             TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (fund_id, computed_at)
+);
+
+-- Tier-1-breadth ML signal (Phase 9, ml/greenwashing_risk_model.py) — a RandomForestClassifier
+-- predicts each fund's own claimed sustainability_rank bucket from OBJECTIVE portfolio-composition
+-- columns above (sector/asset/market-cap/credit/involvement), then composition_anomaly_score =
+-- 1 - P(actual bucket): how atypical this fund's real composition looks for the tier it claims.
+-- This is NOT the same signal as fund_risk_scores above and the two need not agree — fund_risk_scores
+-- compares claim vs. real security-level holdings-implied ESG (Tier 2, 4 funds only); this table
+-- compares claim vs. population-typical portfolio composition (Tier 1, ~41k funds with a claim).
+-- See docs/DATA.md's Tier 1 composition-anomaly model section for a worked example of the two
+-- signals disagreeing on the same fund, and why that's expected rather than a bug.
+CREATE TABLE IF NOT EXISTS fund_sustainability_anomaly_scores (
+    fund_id                     TEXT REFERENCES funds(fund_id),
+    predicted_rating_bucket     TEXT NOT NULL,   -- 'Low' | 'Medium' | 'High', the model's prediction
+    actual_rating_bucket        TEXT NOT NULL,   -- 'Low' | 'Medium' | 'High', from the real claimed sustainability_rank
+    composition_anomaly_score   NUMERIC NOT NULL,  -- 0-100, higher = composition more atypical for the claimed tier
+    composition_anomaly_tier    TEXT NOT NULL,     -- 'Low' | 'Medium' | 'High' anomaly, quantile business rule at train time
+    model_version                TEXT NOT NULL,
+    computed_at                  TIMESTAMPTZ DEFAULT now(),
     PRIMARY KEY (fund_id, computed_at)
 );
 

@@ -64,6 +64,13 @@ class TestWithRowLimit:
         assert sql_agent._with_row_limit(sql) == sql
 
 
+class TestSchemaDDL:
+    def test_includes_sustainability_anomaly_scores_table(self):
+        # Phase 9: the Tier 1 ML signal must be queryable via NL2SQL without a new agent/route.
+        assert "fund_sustainability_anomaly_scores" in sql_agent._SCHEMA_DDL
+        assert "composition_anomaly_score" in sql_agent._SCHEMA_DDL
+
+
 class TestGenerateSql:
     def test_returns_validated_sql_from_llm(self):
         llm = FakeLLM("```sql\nSELECT fund_id FROM funds\n```")

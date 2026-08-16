@@ -91,6 +91,92 @@ real LU-domiciled fund into the verified set would need either a headless browse
 those sites, a paid data provider, or contacting the issuer directly — none attempted, given
 Phase 2's time budget. Left as a candidate follow-up, not blocking Phase 3.
 
+## Tier 1 composition-anomaly model (ML)
+
+Phase 9. `ml/greenwashing_risk_model.py` — the project's first classical, **trained** ML
+component (previously an unimplemented stub; the shipped score was `agents/risk_agent.py`'s
+hand-written linear formula, not a learned model).
+
+**Why not a classifier trained to detect greenwashing directly:** no free dataset carries a real
+SFDR/greenwashing label (see "Ground-truth methodology" above), and the only place a genuine
+holdings-based signal exists (Tier 2, `compute_gap()`) covers **4 funds** — far too small for a
+credible train/test split. Instead, this model uses the full Tier 1 population and predicts a
+**real, existing** field.
+
+**Model:** a single `RandomForestClassifier` predicting each fund's own claimed
+`sustainability_rating`, bucketed Low(1-2)/Medium(3)/High(4-5), from 41 **objective**
+portfolio-composition columns newly loaded onto `funds` (`etl/load_funds_postgres.
+COMPOSITION_COLUMNS` — asset-class mix, 11 sector allocations, 5 market-cap tiers, 8
+credit-quality tiers, 13 controversial-business-involvement percentages — alcohol, tobacco,
+weapons, gambling, thermal coal, etc.). These were present in the raw Kaggle export from day one
+but never loaded into Postgres until now. **Deliberately excludes**
+`environmental_score`/`social_score`/`governance_score`/`sustainability_score` as features — these
+are commented in `db/schema.sql` as claimed-side, the same signal as the target itself, so
+including them would make the prediction circular. The model's own `predict_proba` output *is*
+the anomaly signal: `composition_anomaly_score = (1 - P(actual claimed bucket)) * 100` — no second
+model trained on the first model's own residual/quantile-bins (considered and rejected as
+near-tautological).
+
+**Methodology, and why it matters:** ~6% of ISINs in the scorable population have more than one
+`fund_id` row (share classes of the same underlying fund, near-identical feature values). A naive
+row-level train/test split lets near-duplicates leak across the split and inflates the score —
+confirmed empirically (naive split: ~92.8% accuracy; the honest, methodologically-correct
+`GroupShuffleSplit` grouped by ISIN: ~90.7-90.9%). Imputation medians (for the structural
+missingness below) are fit on the train fold only and applied unchanged to the test fold — a
+second, smaller leakage source avoided the same way. See
+`notebooks/02_ml_model_worked_example.ipynb` for this comparison reproduced live against the real
+data.
+
+**Missingness is structural, not random:** `credit_*` columns are present almost only for bond
+funds, `sector_*`/`market_cap_*` almost only for equity funds (confirmed via crosstab: mean
+`asset_bond` ≈ 77% when `credit_aaa` is present vs. ≈19% when absent). Handled via median
+imputation plus a same-named `<col>__missing` indicator flag per feature — the flags themselves
+carry real signal, not noise.
+
+**Real metrics** (trained via `python -m greenlux_sentinel.ml.train_greenwashing_risk_model`
+against the real local `data/raw/*.csv` files, 67,098 funds, 40,737 with a claimed rating,
+`GroupShuffleSplit` by ISIN):
+
+- **Classification (shipped model): accuracy 90.9%, macro-F1 0.910**, vs. a 38.4% most-frequent-
+  class baseline; confusion matrix diagonal-dominant across all three buckets, no collapsed class.
+- Top feature importances are intuitively sane — `market_cap_small`, `market_cap_giant`,
+  `sector_energy`, `involvement_thermal_coal`, `sector_technology`, `involvement_animal_testing` —
+  well-known real ESG-score drivers, another sanity check that the model learned a real pattern.
+- `category` (295 distinct values, confirmed no leakage-by-name of "sustainable/esg/sri" terms) is
+  left out of v1 — too high-cardinality for naive one-hot, and target/mean encoding needs
+  out-of-fold care not justified yet without a live DB to validate against. Deferred follow-up:
+  per-category peer normalization (compare a fund's anomaly score only against same-category
+  peers).
+- A regression variant (predict continuous `sustainability_score` instead) was also validated,
+  same split methodology: R²≈0.76, MAE≈1.0 (target std≈3.76) — comparably strong signal, not
+  shipped as primary because the classification framing matches the existing Low/Medium/High
+  globe-rating vocabulary more directly, not because it performed worse.
+- A pure unsupervised `IsolationForest` was considered and rejected: it can't condition on
+  "atypical *for its claimed tier*," which is the actual point of a supervised model here.
+
+**Honest limitation — this signal does NOT need to agree with Tier 2's `compute_gap()`, and in the
+one case checked, it doesn't.** Cross-checking against `IE00BYVJRR92` (iShares MSCI USA SRI UCITS
+ETF, `fund_id` `0P00018CYB` — the same fund already used in the live-verified Phase 7/8 demo):
+Tier 1's composition-anomaly score is **14.82 (Low tier)** — this fund's sector/asset/involvement
+mix looks entirely typical for a High-claiming fund — while Tier 2's real holdings-based gap is
+**53.03** (`holdings_implied_esg=1039.64`) — its actual, named constituents' individual ESG scores
+tell a less flattering story. This is the expected, correct result of two different questions, not
+a bug: Tier 1 asks "is this claim typical for funds with this kind of *portfolio composition*,
+population-wide?" (broad, ~41k funds, but coarse); Tier 2 asks "given this fund's *actual
+constituent holdings*, does the real weighted ESG profile support the claim?" (narrow, 4 funds,
+but the more grounded question). This is exactly why the two-tier architecture (decision #2) is
+kept rather than collapsed into one score. Full walkthrough, plus a contrasting fund the model
+*does* flag (`F00000W9IL`, UBAM SRI European Convertible Bond, predicted Medium vs. claimed High,
+anomaly score 65.27/High tier): `notebooks/02_ml_model_worked_example.ipynb`.
+
+**Scope, honestly stated:** not wired into `etl_agent.run_ingestion()`, a new LangGraph agent
+node, or a new API route this pass (see docs/PROGRESS_LOG.md's Phase 9 entry for why). Not run
+against live Azure Postgres — no credentials were available in the session that built this; the
+schema/loader changes are real code, trained/evaluated only against the local, gitignored
+`data/raw/*.csv` files, and `agents/sql_agent.py`'s `_SCHEMA_DDL` already includes the new
+`fund_sustainability_anomaly_scores` table so the existing NL2SQL agent can query it once live
+data exists.
+
 ## Datasets
 
 | Dataset | Source | Size | Format | Role |

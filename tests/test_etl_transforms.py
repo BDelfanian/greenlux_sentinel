@@ -77,6 +77,28 @@ class TestFundsTransform:
         with pytest.raises(ValueError, match="missing expected columns"):
             load_funds_postgres.transform(mutual_funds_df.drop(columns=["sustainability_score"]), "mutual_fund")
 
+    def test_composition_columns_pass_through_unchanged(self, mutual_funds_df):
+        # F001 is a pure-equity fund fixture row — sector_technology=6.5, asset_stock=96.5.
+        out = load_funds_postgres.transform(mutual_funds_df, "mutual_fund")
+        row = out.loc[out["fund_id"] == "F001"].iloc[0]
+        assert row["sector_technology"] == pytest.approx(6.5)
+        assert row["asset_stock"] == pytest.approx(96.5)
+        assert row["involvement_tobacco"] == pytest.approx(0.9)
+
+    def test_composition_columns_reflect_real_equity_vs_bond_missingness(self, mutual_funds_df):
+        # F003 is a pure-bond fixture row: sector_*/market_cap_* absent, credit_* present —
+        # matches the real Kaggle export's structural missingness (docs/DATA.md).
+        out = load_funds_postgres.transform(mutual_funds_df, "mutual_fund")
+        bond_row = out.loc[out["fund_id"] == "F003"].iloc[0]
+        assert pd.isna(bond_row["sector_technology"])
+        assert pd.isna(bond_row["market_cap_giant"])
+        assert bond_row["credit_bb"] == pytest.approx(25.0)
+
+        # F004 is a pure-equity fixture row: the reverse pattern.
+        equity_row = out.loc[out["fund_id"] == "F004"].iloc[0]
+        assert pd.isna(equity_row["credit_bb"])
+        assert equity_row["sector_technology"] == pytest.approx(21.0)
+
 
 class TestEsgCosmosTransform:
     def test_one_doc_per_etf(self, holdings_df, esg_df):

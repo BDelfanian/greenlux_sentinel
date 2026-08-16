@@ -16,6 +16,12 @@ docs/DATA.md#datasets), reconciled here against notebooks/01_data_profiling find
       `claimed_sustainability_rating`; `sustainability_score` and the E/S/G subscores are
       Morningstar's own portfolio-level score behind it — still the *claimed* side, not a
       substitute for the Tier 2 holdings-implied comparison.
+    - Phase 9: also loads 41 OBJECTIVE portfolio-composition columns (asset-class mix, sector
+      allocation, market-cap tiers, credit-quality tiers, controversial-business-involvement
+      percentages) that were present in the raw export from day one but not previously loaded —
+      these feed `ml/greenwashing_risk_model.py`, not the Tier 2 formula. Raw CSV column names
+      already match the target `funds` column names exactly (see db/schema.sql), so
+      `COMPOSITION_COLUMNS` below maps identity pairs, not renames.
 
 Does NOT add a literal "sfdr_article" column — see docs/DATA.md#ground-truth-methodology.
 """
@@ -31,6 +37,25 @@ from greenlux_sentinel.db.audit import write_audit_log
 
 if TYPE_CHECKING:
     import psycopg
+
+# Objective portfolio-composition columns (Phase 9) — raw CSV name == funds table column name,
+# see db/schema.sql's own comment on these. Shared with ml/greenwashing_risk_model.py's
+# FEATURE_COLUMNS so the two never drift apart.
+COMPOSITION_COLUMNS: list[str] = [
+    "asset_stock", "asset_bond", "asset_cash", "asset_other",
+    "sector_basic_materials", "sector_consumer_cyclical", "sector_financial_services",
+    "sector_real_estate", "sector_consumer_defensive", "sector_healthcare", "sector_utilities",
+    "sector_communication_services", "sector_energy", "sector_industrials", "sector_technology",
+    "market_cap_giant", "market_cap_large", "market_cap_medium", "market_cap_small",
+    "market_cap_micro",
+    "credit_aaa", "credit_aa", "credit_a", "credit_bbb", "credit_bb", "credit_b",
+    "credit_below_b", "credit_not_rated",
+    "involvement_abortive_contraceptive", "involvement_alcohol", "involvement_animal_testing",
+    "involvement_controversial_weapons", "involvement_gambling", "involvement_gmo",
+    "involvement_military_contracting", "involvement_nuclear", "involvement_palm_oil",
+    "involvement_pesticides", "involvement_small_arms", "involvement_thermal_coal",
+    "involvement_tobacco",
+]
 
 # raw CSV header -> funds table column (db/schema.sql). `fund_type`, `domicile_country`, and
 # `management_company` are derived separately, not a 1:1 rename — see transform().
@@ -53,6 +78,7 @@ RAW_COLUMN_MAP: dict[str, str] = {
     "fund_trailing_return_10years": "return_10y",
     "quarters_up": "quarters_up",
     "quarters_down": "quarters_down",
+    **{col: col for col in COMPOSITION_COLUMNS},
 }
 
 _NUMERIC_COLUMNS = [
@@ -69,6 +95,7 @@ _NUMERIC_COLUMNS = [
     "return_10y",
     "quarters_up",
     "quarters_down",
+    *COMPOSITION_COLUMNS,
 ]
 
 _COLUMN_ORDER = [
@@ -76,6 +103,7 @@ _COLUMN_ORDER = [
     "category", "currency", "total_net_assets", "ongoing_cost", "sustainability_rating",
     "sustainability_score", "environmental_score", "social_score", "governance_score",
     "return_ytd", "return_3y", "return_5y", "return_10y", "quarters_up", "quarters_down",
+    *COMPOSITION_COLUMNS,
 ]
 
 _UPSERT_SQL = f"""
