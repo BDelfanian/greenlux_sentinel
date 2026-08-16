@@ -12,7 +12,10 @@ orchestration, not free-form agent-to-agent messaging (see CLAUDE.md decision #6
 original single-hop routes are untouched by this. Phase 9b added `ml_risk` as a fourth plannable
 hop (`agents/ml_risk_agent.py`) — deliberately hop-only, no dedicated top-level route, since its
 value is specifically in combination with document evidence (see CLAUDE.md decision #6's Phase 9b
-update for why this is the concrete answer to "what does the ML model add").
+update for why this is the concrete answer to "what does the ML model add"). **Phase 9c** fixed two
+real bugs live testing found in `synthesize()`/`dispatch()` that had silently prevented
+`sql`/`risk`/`ml_risk` facts from ever actually reaching the Evidence Agent's own drafting call
+when `evidence` was itself one of the planned hops — see CLAUDE.md decision #6's Phase 9c update.
 
 ```mermaid
 flowchart LR
@@ -40,7 +43,7 @@ flowchart LR
 | Query-Optimizer Agent | Reads `EXPLAIN ANALYZE` output, proposes/creates indexes | Postgres MCP (DDL) | **yes** — schema changes require approval |
 | Dashboard Agent | Turns an analyst question into a DAX/Power BI query, updates the live dashboard | Power BI MCP | no (read-only refresh) |
 | Report Agent | Compiles risk score + SQL findings into a cited, multilingual report | Postgres MCP, Cosmos MCP | **yes** — publishing requires approval |
-| Evidence Agent *(Phase 8b)* | Combines Tier 1 fund facts with retrieved document evidence into one cited answer, or an explicit abstention | Postgres MCP, Search MCP | no (read-only) — flows into the Report Agent's existing gate if/when linked into a published report (deferred) |
+| Evidence Agent *(Phase 8b)* | Combines Tier 1 fund facts (incl. `risk`/`ml_risk` hop facts since Phase 9c) with retrieved document evidence into one cited answer — `[doc:<id>]` and `[fact:<key>]` citations both independently validated — or an explicit abstention | Postgres MCP, Search MCP | no (read-only) — flows into the Report Agent's existing gate if/when linked into a published report (deferred) |
 | ML Composition-Anomaly Agent *(Phase 9b, `ml_risk_agent.py`)* | Scores a fund's Tier 1 composition-anomaly signal (the Phase 9 trained classifier) and persists it | Postgres MCP (audit-log write only) — the feature-row read and score write are direct psycopg calls, same convention risk_agent.py documents for its own hardcoded, non-analyst-facing reads/writes | no (read-only besides its own output row) — **no dedicated route**, `multi_hop`-plannable hop only |
 
 ## MCP servers
@@ -142,13 +145,16 @@ an oversight. What still differentiates the two is **mechanism of use and questi
 | Orchestration | OpenAI Responses API, native function-calling | LangGraph + LangChain + LangSmith, incl. a supervisor-*planned* multi-hop pipeline (Phase 8c) — not free-form agent-to-agent messaging |
 | Cosmos DB API | Gremlin (graph) | NoSQL/Core (document) — Azure AI Search, not Cosmos, is where Phase 8's document index lives |
 | Question shape | "Which sub-funds are Article 8, what does CSSF guidance say?" (open-ended, regulatory-text-first) | "Is this fund's claim consistent with its holdings *and* its own disclosures?" (fund-first, quantitative-plus-evidence) |
-| Surface | Next.js chat UI + graph visualization, open-ended RAG conversation, full chat history | Power BI dashboard + generated report (analyst-facing); a Next.js operator UI (`ui/`) that drives seven fixed specialist agents (incl. `evidence`/`multi_hop` since Phase 8) and shows the full result (query, score, report, citations, hop trace) — still not a chat, no conversation history, one request in, one structured result out |
+| Surface | Next.js chat UI + graph visualization, open-ended RAG conversation, full chat history | Power BI dashboard + generated report (analyst-facing); a Next.js operator UI (`ui/`) that drives seven routable specialist agents (incl. `evidence`/`multi_hop` since Phase 8) plus `ml_risk` as an eighth, plannable-hop-only specialist (Phase 9b) and shows the full result (query, score, report, citations, hop trace) — still not a chat, no conversation history, one request in, one structured result out |
 | MCP | Not used | Core requirement |
 
 ## Guardrails and human-in-the-loop
 
 Detailed in [RESPONSIBLE_AI.md](RESPONSIBLE_AI.md). The short version: every agent tool call is
 logged (Postgres audit table + LangSmith trace); numeric claims in the report must trace back to
-a tool call result, not free-generated text; document-grounded claims from the Evidence Agent must
-cite a retrieved passage or explicitly abstain (Phase 8b, Principle 5); and the two write-capable
-agents (query-optimizer, report) stop for human approval before their output takes effect.
+a tool call result, not free-generated text; every claim the Evidence Agent makes must cite a
+retrieved document passage (`[doc:<id>]`) or a supplied fact (`[fact:<key>]`, Phase 9c) or the
+agent must explicitly abstain (Phase 8b/9c, Principle 5) — two distinct, independently-validated
+citation forms, not one conflated marker, so a tool-sourced number is never forced to masquerade
+as document-grounded; and the two write-capable agents (query-optimizer, report) stop for human
+approval before their output takes effect.

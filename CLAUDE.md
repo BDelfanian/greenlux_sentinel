@@ -111,6 +111,22 @@ without checking with the user first.
    `risk`'s and `ml_risk`'s output under distinctly-named keys (`greenwashing_risk_score` vs.
    `composition_anomaly_score`) so the evidence agent's LLM prompt cannot conflate the two
    signals into one number.
+   **Correction (Phase 9c):** Phase 9b's hop wiring alone did not actually achieve the combination
+   it claimed — live testing found `dispatch()`'s `evidence` branch never passed
+   `precomputed_facts`, so whenever `evidence` was itself a planned hop (e.g. `["ml_risk",
+   "evidence"]`), it drafted its answer in total isolation from `ml_risk`'s result, and
+   `synthesize()` just reused that isolated answer verbatim. Separately,
+   `evidence_agent.answer_with_evidence()`'s isin resolution was `elif`-exclusive with
+   `precomputed_facts`, so a call carrying both a `fund_id` and hop facts never looked up the
+   fund's own isin, silently falling back to an *unscoped* document search. Both fixed and
+   live-confirmed (real deployed Azure OpenAI + Azure AI Search, and independently by the user's
+   own live UI test) to produce a real answer citing both a document passage and a fact together
+   — see docs/PROGRESS_LOG.md's Phase 9c entry. Also added: `guardrails/grounding.py`'s
+   `[fact:<key>]` citation form (validated against real supplied fact keys, not trusted blindly),
+   alongside the existing `[doc:<id>]` — a fact has no document to cite, and forcing it through
+   the document-citation path made the model abstain even when it had a real number to state.
+   **Don't collapse `[fact:<key>]` back into `[doc:<id>]` or drop it** — that's exactly the bug
+   this correction fixed.
 
 7. **Human-in-the-loop gates:** required before (a) the report agent finalizes/publishes a
    report, and (b) the query-optimizer agent applies a schema change (e.g. creating an index) in

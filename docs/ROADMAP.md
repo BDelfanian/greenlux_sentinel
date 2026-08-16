@@ -347,14 +347,37 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       to see real (not cherry-picked) planner behavior — the LLM planner chose `["evidence"]` alone
       for that phrasing, i.e. it does not reliably include `ml_risk` unless the question names the
       signal fairly explicitly, a real characteristic of the live system worth knowing, not a bug.
-      **One genuine, non-obvious finding**: even with `ml_risk`'s fact correctly gathered
-      (confirmed present in `hop_results`), the final synthesized answer abstained
-      (`"I don't know -- insufficient evidence"`, `abstained: true`) rather than stating the
-      composition-anomaly number — `evidence_agent`'s `_DRAFT_SYSTEM_PROMPT` requires a `[doc:<id>]`
-      citation for "every claim," and a precomputed numeric fact has no document id to cite, so the
-      grounding-guardrail-following LLM conservatively declines rather than state an uncited
-      number. This is the guardrail behaving safely (Principle 5), not a crash — but it means
-      today, a synthesized answer that actually *states* the ML score inline alongside document
-      evidence isn't reliably produced; see docs/PROGRESS_LOG.md's entry for the real transcripts
-      and the follow-up this suggests (a fact-citation form distinct from `[doc:<id>]`, e.g.
-      `[fact:composition_anomaly_score]`, not built this pass).
+      **One genuine, non-obvious finding, since fixed (see Phase 9c below)**: even with
+      `ml_risk`'s fact correctly gathered (confirmed present in `hop_results`), the final
+      synthesized answer abstained (`"I don't know -- insufficient evidence"`) rather than stating
+      the composition-anomaly number — `evidence_agent`'s `_DRAFT_SYSTEM_PROMPT` required a
+      `[doc:<id>]` citation for "every claim," and a precomputed numeric fact has no document id to
+      cite. This was the guardrail behaving safely (Principle 5), not a crash, but it meant a
+      synthesized answer combining the ML score with document evidence wasn't reliably produced.
+
+### Phase 9c — fix the abstention gap, live-confirmed
+
+- [x] **Fix 1 — `[fact:<key>]` citation form.** `guardrails/grounding.py`'s
+      `document_grounded_or_abstained()` accepts a second citation marker alongside `[doc:<id>]`,
+      validated against a real `known_fact_keys` set (not accepted on trust).
+      `evidence_agent._DRAFT_SYSTEM_PROMPT`/`_STRICT_SUFFIX` teach the model both forms. Backward
+      compatible — existing doc-only callers unaffected.
+- [x] **Fix 2 — the evidence hop was running blind to earlier hops' facts.** A deeper,
+      pre-existing Phase 8c gap: `supervisor.dispatch()`'s `evidence` branch never passed
+      `precomputed_facts`, so a plan like `["ml_risk", "evidence"]` drafted the evidence answer
+      using only basic Postgres facts, and `synthesize()` just reused that isolated answer
+      verbatim. Fixed: `dispatch()` now passes `_facts_from_hops(hop_results)` into evidence's own
+      call. Also decoupled `answer_with_evidence()`'s isin resolution from `precomputed_facts`
+      (previously `elif`-exclusive, so a fund_id-scoped search silently fell back to unscoped
+      whenever facts were also supplied).
+- [x] **Live-confirmed, twice independently** — once via this session's own diagnostic script
+      against the real deployed Azure OpenAI + Azure AI Search, and once by the user's own live UI
+      request (`0P0001EVL3`, plan `["sql", "ml_risk", "evidence"]`): a real, non-abstained,
+      correctly-cited answer combining `[doc:kiid_SASU_ie00bfnm3g45_2]`/`_3` (real KIID text) with
+      `[fact:composition_anomaly_score]`/`[fact:composition_anomaly_tier]` (the real 47.49/Medium).
+- [x] 10 new tests (6 `test_grounding.py`, 4 across `test_evidence_agent.py`/`test_supervisor.py`)
+      — 257 total passing, `ruff check .` clean. Deployed and approved same day.
+- [x] Also confirmed live: question *phrasing* measurably affects `hybrid_search()`'s retrieval
+      quality — an instruction-heavy phrasing didn't surface the fund's own KIID in its top 5
+      results, a more natural front-loaded phrasing did. Not a code bug; documented as a
+      characteristic worth knowing when writing example questions (docs/PROGRESS_LOG.md).

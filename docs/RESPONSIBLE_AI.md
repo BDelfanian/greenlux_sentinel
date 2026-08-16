@@ -75,5 +75,8 @@ determination of greenwashing or SFDR non-compliance for any real fund. Say this
 the README and in the generated report template.
 
 The Phase 9 composition-anomaly model is a portfolio-scope evaluation, not a governed production
-ML system: no drift monitoring, no scheduled retraining pipeline, and (as of Phase 9) no live
-Postgres run — trained and evaluated against the local `data/raw/*.csv` files only.
+ML system: no drift monitoring, no scheduled retraining pipeline. Trained and evaluated against
+the local `data/raw/*.csv` files; since Phase 9b it has also been run live against the real
+deployed Postgres (a one-off manual backfill, not yet wired into the scheduled
+`etl_agent.run_ingestion()` — see docs/ROADMAP.md), so the anomaly-score table will go stale after
+the next scheduled data refresh until that wiring lands.

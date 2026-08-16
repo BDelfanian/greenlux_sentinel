@@ -88,6 +88,17 @@ both `[doc:kiid_SASU_ie00bfnm3g45_2]`/`_3` and `[fact:composition_anomaly_score]
 Azure AI Search. Question phrasing measurably affects retrieval quality -- not something to "fix"
 in code, just worth knowing when writing example questions for the UI.
 
+**Independently re-confirmed by the user themselves**, not just by this session's own diagnostic
+script: a live UI request for `0P0001EVL3` with the front-loaded phrasing returned a real,
+non-abstained answer citing both `[doc:kiid_SASU_ie00bfnm3g45_2]`/`_3` (real KIID exclusion text)
+and `[fact:composition_anomaly_score]`/`[fact:composition_anomaly_tier]`/
+`[fact:ml_predicted_rating_bucket]` (the real 47.49/Medium/Medium), with a genuine synthesized
+conclusion tying the two together. The planner also added a `sql` hop this run
+(`["sql", "ml_risk", "evidence"]`) on its own initiative — a real join query against
+`fund_sustainability_anomaly_scores`/`fund_reports` that returned zero rows (no stored report for
+this fund) and was silently ignored by `_facts_from_hops()`, no error, no effect on the final
+answer. Both Phase 9c fixes are confirmed closed, live, end to end.
+
 **Next step:** wire `score_all_funds()` into `etl_agent.run_ingestion()` (still open from Phase 9b).
 Consider whether `_DRAFT_SYSTEM_PROMPT` should hint that a well-scoped, front-loaded question
 retrieves better than an instruction-heavy one, or whether that's better left as UI-facing guidance

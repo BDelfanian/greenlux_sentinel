@@ -190,6 +190,16 @@ score — not just prose. See CLAUDE.md decision #6's Phase 9b update for the fu
 including why `risk` and `ml_risk` are kept as two distinctly-named facts, never merged into one
 number.
 
+**Phase 9c — the above didn't actually work until this fix, and now it's live-confirmed.** Phase
+9b's hop wiring alone still produced abstentions: the evidence hop drafted its answer blind to
+`ml_risk`'s result (a `dispatch()` bug), and even once facts did reach it, a precomputed number had
+no `[doc:<id>]` to cite so the guardrail-following model declined to state it. Both fixed — see
+CLAUDE.md decision #6's Phase 9c correction and docs/PROGRESS_LOG.md's Phase 9c entry for the real
+transcript: a live question about `0P0001EVL3`'s KIID exclusions vs. its 47.49/Medium
+composition-anomaly score returned a genuine synthesized answer citing both, confirmed independently
+by the user's own live UI test. Also: live Postgres backfill happened this same session (Phase 9b's
+live entry) — the "once Postgres is backfilled" caveat above is resolved, not hypothetical.
+
 ## Datasets
 
 | Dataset | Source | Size | Format | Role |
