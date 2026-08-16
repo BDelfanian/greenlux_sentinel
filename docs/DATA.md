@@ -177,6 +177,19 @@ schema/loader changes are real code, trained/evaluated only against the local, g
 `fund_sustainability_anomaly_scores` table so the existing NL2SQL agent can query it once live
 data exists.
 
+**Phase 9b — wired into the multi-hop pipeline.** `agents/ml_risk_agent.py` (a new,
+Postgres-wired, `risk_agent.score_fund()`-shaped caller of this model) is now a fourth plannable
+hop in `agents/supervisor.py`'s `multi_hop` route, alongside `sql`/`risk`/`evidence`. This is the
+concrete answer to "what does this model add for a user": `risk` (Tier 2) only succeeds for the 5
+issuer-verified ETFs — every other fund's multi-hop answer today combines document evidence with
+*zero* quantitative grounding. `ml_risk` fills that gap for any fund with a claimed rating and
+composition data (~41k funds once Postgres is backfilled), so a question like "is this fund's KIID
+consistent with its rating, and does anything about its portfolio composition look unusual?" gets
+one synthesized answer citing both a real disclosure passage *and* a real, quantified anomaly
+score — not just prose. See CLAUDE.md decision #6's Phase 9b update for the full reasoning,
+including why `risk` and `ml_risk` are kept as two distinctly-named facts, never merged into one
+number.
+
 ## Datasets
 
 | Dataset | Source | Size | Format | Role |

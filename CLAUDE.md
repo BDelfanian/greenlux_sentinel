@@ -99,6 +99,18 @@ without checking with the user first.
    messaging (evaluated and explicitly rejected in favor of this — a planned pipeline keeps the
    human-in-the-loop gates and audit trail in decision #7 exactly as tractable as the original
    single-hop design). The six original single-hop routes/edges are completely untouched.
+   **Update (Phase 9b):** a fourth plannable hop, `ml_risk` (`agents/ml_risk_agent.
+   score_fund_composition`), joined `{sql, risk, evidence}` — this is what actually lets the
+   Phase 9 ML signal (decision #8) combine with document evidence into one synthesized answer,
+   which is the concrete answer to "what's the added value of the model": for the ~41k funds
+   outside decision #2's 5 issuer-verified ETFs, the `risk` hop fails cleanly (no Tier 2 holdings
+   data) and a multi-hop answer today has document evidence with no quantitative grounding at all;
+   `ml_risk` fills that gap. Deliberately *not* a new top-level single-hop route or REST
+   endpoint — its value is specifically in combination via `synthesize()`, and it's already
+   reachable that way (see `agents/supervisor.py`'s module docstring). `_facts_from_hops()` keeps
+   `risk`'s and `ml_risk`'s output under distinctly-named keys (`greenwashing_risk_score` vs.
+   `composition_anomaly_score`) so the evidence agent's LLM prompt cannot conflate the two
+   signals into one number.
 
 7. **Human-in-the-loop gates:** required before (a) the report agent finalizes/publishes a
    report, and (b) the query-optimizer agent applies a schema change (e.g. creating an index) in
@@ -123,12 +135,14 @@ without checking with the user first.
    LangGraph agent node, or a new API route this pass — deliberately scoped down; see
    docs/PROGRESS_LOG.md's Phase 9 entry. Not live-Postgres-verified as of Phase 9 (no Azure
    Postgres credentials available in that session) — trained/evaluated against the local
-   `data/raw/*.csv` files only.
+   `data/raw/*.csv` files only. **Update (Phase 9b):** now also wired into the `multi_hop`
+   pipeline as a plannable hop — see decision #6's Phase 9b update.
 
 ## Repo map
 
 - `src/greenlux_sentinel/agents/` — LangGraph agent nodes (supervisor + specialists, incl.
-  `evidence_agent.py` since Phase 8b)
+  `evidence_agent.py` since Phase 8b and `ml_risk_agent.py` since Phase 9b — the Postgres-wired
+  caller of `ml/greenwashing_risk_model.py`, plannable-hop-only, no dedicated route)
 - `src/greenlux_sentinel/mcp_servers/` — MCP tool servers (Postgres, Cosmos, Power BI, GLEIF,
   `search_server.py`/Azure AI Search since Phase 8b)
 - `src/greenlux_sentinel/etl/` — ingestion scripts (Kaggle CSVs/JSON → Postgres/Cosmos; document

@@ -60,6 +60,28 @@ class TestRunRisk:
         assert result == {"result": {"risk_score": 50.0}}
 
 
+class TestRunMlRisk:
+    def test_missing_fund_id_returns_error(self):
+        result = supervisor.dispatch({"request": "q", "plan": ["ml_risk"], "hop_results": {}, "hop_errors": {}, "trace": []})
+        assert "fund_id" in result["hop_errors"]["ml_risk"]
+
+    def test_returns_result_on_success(self):
+        ml_result = {"composition_anomaly_score": 14.82, "composition_anomaly_tier": "Low"}
+        with patch("greenlux_sentinel.agents.ml_risk_agent.score_fund_composition", return_value=ml_result) as m:
+            result = supervisor.dispatch(
+                {"request": "q", "fund_id": "F1", "plan": ["ml_risk"], "hop_results": {}, "hop_errors": {}, "trace": []}
+            )
+        assert result["hop_results"]["ml_risk"] == ml_result
+        m.assert_called_once_with("F1")
+
+    def test_failure_becomes_hop_error_not_raise(self):
+        with patch("greenlux_sentinel.agents.ml_risk_agent.score_fund_composition", side_effect=ValueError("boom")):
+            result = supervisor.dispatch(
+                {"request": "q", "fund_id": "F1", "plan": ["ml_risk"], "hop_results": {}, "hop_errors": {}, "trace": []}
+            )
+        assert result["hop_errors"]["ml_risk"] == "boom"
+
+
 class TestRunQueryOptimizer:
     def test_returns_result_on_success(self):
         with patch("greenlux_sentinel.agents.query_optimizer_agent.propose_index", return_value={"proposal_id": "1"}):
@@ -138,6 +160,26 @@ class TestFactsFromHops:
     def test_extracts_risk_score_and_explanation(self):
         facts = supervisor._facts_from_hops({"risk": {"risk_score": 42.5, "explanation": "..."}})
         assert facts == {"greenwashing_risk_score": 42.5, "risk_explanation": "..."}
+
+    def test_extracts_ml_risk_facts_under_distinct_keys(self):
+        facts = supervisor._facts_from_hops(
+            {"ml_risk": {"composition_anomaly_score": 14.82, "composition_anomaly_tier": "Low", "predicted_rating_bucket": "High"}}
+        )
+        assert facts == {
+            "composition_anomaly_score": 14.82,
+            "composition_anomaly_tier": "Low",
+            "ml_predicted_rating_bucket": "High",
+        }
+
+    def test_risk_and_ml_risk_facts_coexist_without_colliding(self):
+        facts = supervisor._facts_from_hops(
+            {
+                "risk": {"risk_score": 53.03, "explanation": "..."},
+                "ml_risk": {"composition_anomaly_score": 14.82, "composition_anomaly_tier": "Low"},
+            }
+        )
+        assert facts["greenwashing_risk_score"] == 53.03
+        assert facts["composition_anomaly_score"] == 14.82
 
     def test_extracts_scalar_fields_from_first_sql_row(self):
         facts = supervisor._facts_from_hops({"sql": {"rows": [{"name": "Fund One", "total_net_assets": 100.0}]}})
@@ -283,6 +325,53 @@ class TestBuildGraph:
         assert final_state["final_answer"] == evidence_result
         assert final_state["result"] == evidence_result
         # evidence was already run as a plannable hop -- synthesize() must reuse it, not call twice.
+        m.assert_called_once()
+
+    def test_multi_hop_route_combines_risk_and_ml_risk_facts_for_synthesize(self):
+        # Both quantitative signals present (the 4 funds that have both) -- synthesize() must pass
+        # BOTH under their own distinct keys, not merge or drop either (CLAUDE.md decision #8).
+        llm = SequentialFakeLLM(["multi_hop", '["risk", "ml_risk"]'])
+        risk_result = {"risk_score": 53.03, "explanation": "..."}
+        ml_risk_result = {"composition_anomaly_score": 14.82, "composition_anomaly_tier": "Low"}
+        final_answer = {"answer": "synthesized [doc:kiid_1_0].", "abstained": False}
+
+        with (
+            patch("greenlux_sentinel.agents.risk_agent.score_fund", return_value=risk_result),
+            patch("greenlux_sentinel.agents.ml_risk_agent.score_fund_composition", return_value=ml_risk_result),
+            patch("greenlux_sentinel.agents.evidence_agent.answer_with_evidence", return_value=final_answer) as m,
+        ):
+            graph = supervisor.build_graph(llm=llm)
+            graph.invoke({"request": "Give me the fullest risk picture with evidence.", "fund_id": "F1"})
+
+        m.assert_called_once_with(
+            "Give me the fullest risk picture with evidence.",
+            fund_id="F1",
+            precomputed_facts={
+                "greenwashing_risk_score": 53.03,
+                "risk_explanation": "...",
+                "composition_anomaly_score": 14.82,
+                "composition_anomaly_tier": "Low",
+            },
+        )
+
+    def test_multi_hop_route_chains_ml_risk_then_evidence(self):
+        llm = SequentialFakeLLM(["multi_hop", '["ml_risk", "evidence"]'])
+        ml_risk_result = {"composition_anomaly_score": 14.82, "composition_anomaly_tier": "Low", "predicted_rating_bucket": "High"}
+        evidence_result = {"answer": "Composition looks typical for its claim [doc:kiid_1_0].", "abstained": False}
+
+        with (
+            patch("greenlux_sentinel.agents.ml_risk_agent.score_fund_composition", return_value=ml_risk_result),
+            patch("greenlux_sentinel.agents.evidence_agent.answer_with_evidence", return_value=evidence_result) as m,
+        ):
+            graph = supervisor.build_graph(llm=llm)
+            final_state = graph.invoke(
+                {"request": "Is this fund's disclosed strategy consistent with its rating?", "fund_id": "F1"}
+            )
+
+        assert final_state["plan"] == ["ml_risk", "evidence"]
+        assert final_state["hop_results"]["ml_risk"] == ml_risk_result
+        assert final_state["final_answer"] == evidence_result
+        # evidence was run as a plannable hop directly -- synthesize() must reuse it, not re-call.
         m.assert_called_once()
 
     def test_multi_hop_route_without_evidence_hop_still_synthesizes(self):

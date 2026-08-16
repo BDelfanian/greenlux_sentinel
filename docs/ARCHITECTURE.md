@@ -2,13 +2,17 @@
 
 ## Agent graph (LangGraph)
 
-A single supervisor graph coordinates seven specialist agents. All agent-to-tool calls go through
-MCP servers (never direct SDK calls from agent code) so tool access is uniform, inspectable, and
-swappable. Phase 8c added a `multi_hop` route: the supervisor's planner node picks an ordered
-subset of `{sql, risk, evidence}`, a dispatch node runs them one at a time, then a synthesize node
+A single supervisor graph coordinates eight specialist agents (seven routable + one
+plannable-hop-only, see below). All agent-to-tool calls go through MCP servers (never direct SDK
+calls from agent code) so tool access is uniform, inspectable, and swappable. Phase 8c added a
+`multi_hop` route: the supervisor's planner node picks an ordered subset of
+`{sql, risk, ml_risk, evidence}`, a dispatch node runs them one at a time, then a synthesize node
 calls the Evidence Agent with the gathered facts to produce one final answer — supervisor-*planned*
 orchestration, not free-form agent-to-agent messaging (see CLAUDE.md decision #6). The six
-original single-hop routes are untouched by this.
+original single-hop routes are untouched by this. Phase 9b added `ml_risk` as a fourth plannable
+hop (`agents/ml_risk_agent.py`) — deliberately hop-only, no dedicated top-level route, since its
+value is specifically in combination with document evidence (see CLAUDE.md decision #6's Phase 9b
+update for why this is the concrete answer to "what does the ML model add").
 
 ```mermaid
 flowchart LR
@@ -20,7 +24,7 @@ flowchart LR
     SUP --> DASH[Dashboard Agent]
     SUP --> REP[Report Agent]
     SUP --> EVID[Evidence Agent]
-    SUP -->|multi_hop| PLAN[Planner] --> DISP[Dispatch: sql/risk/evidence] --> SYN[Synthesize] --> EVID
+    SUP -->|multi_hop| PLAN[Planner] --> DISP[Dispatch: sql/risk/ml_risk/evidence] --> SYN[Synthesize] --> EVID
     REP -.needs.-> RISK
     REP -.needs.-> SQL
     DASH -.needs.-> SQL
@@ -31,12 +35,13 @@ flowchart LR
 |---|---|---|---|
 | Supervisor | Routes analyst requests to the right specialist(s), or plans/dispatches a multi-hop chain; merges results | none directly | no |
 | ETL Agent | Ingests Kaggle sources + GLEIF API, resolves schema drift, writes lineage log; also fetches/tags/indexes the Phase 8 document corpus | Postgres MCP, Cosmos MCP, GLEIF MCP, Search MCP | no |
-| Greenwashing-Risk Agent | Computes the risk score per fund, explains the driving holdings | Postgres MCP, Cosmos MCP | no (read-only) |
+| Greenwashing-Risk Agent | Computes the Tier 2 holdings-based risk score per fund, explains the driving holdings | Postgres MCP, Cosmos MCP | no (read-only) |
 | NL2SQL Agent | Translates analyst questions into SQL against the fund schema | Postgres MCP | no (read-only) |
 | Query-Optimizer Agent | Reads `EXPLAIN ANALYZE` output, proposes/creates indexes | Postgres MCP (DDL) | **yes** — schema changes require approval |
 | Dashboard Agent | Turns an analyst question into a DAX/Power BI query, updates the live dashboard | Power BI MCP | no (read-only refresh) |
 | Report Agent | Compiles risk score + SQL findings into a cited, multilingual report | Postgres MCP, Cosmos MCP | **yes** — publishing requires approval |
 | Evidence Agent *(Phase 8b)* | Combines Tier 1 fund facts with retrieved document evidence into one cited answer, or an explicit abstention | Postgres MCP, Search MCP | no (read-only) — flows into the Report Agent's existing gate if/when linked into a published report (deferred) |
+| ML Composition-Anomaly Agent *(Phase 9b, `ml_risk_agent.py`)* | Scores a fund's Tier 1 composition-anomaly signal (the Phase 9 trained classifier) and persists it | Postgres MCP (audit-log write only) — the feature-row read and score write are direct psycopg calls, same convention risk_agent.py documents for its own hardcoded, non-analyst-facing reads/writes | no (read-only besides its own output row) — **no dedicated route**, `multi_hop`-plannable hop only |
 
 ## MCP servers
 

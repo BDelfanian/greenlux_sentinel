@@ -10,6 +10,66 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9b — wire the ML composition-anomaly signal into multi-hop synthesis
+
+**Completed:** 2026-08-16
+
+**Done:**
+- **`agents/ml_risk_agent.py` (new)** — the Postgres-wired callable layer around Phase 9's
+  `ml/greenwashing_risk_model.py`, mirroring `risk_agent.score_fund()`'s shape: fetches a fund's
+  composition columns + claimed rating, scores it via the trained model (loaded once via
+  `model.load_model()` and cached at module scope — no in-request training), persists one
+  `fund_sustainability_anomaly_scores` row, and audit-logs the call. Deliberately a *separate*
+  module from `risk_agent.py`, not a branch inside it — the two signals must never be conflated
+  (CLAUDE.md decision #8).
+- **`agents/supervisor.py`: `ml_risk` added as a fourth plannable `multi_hop` hop**, alongside
+  `sql`/`risk`/`evidence` — `_PLANNABLE_HOPS`, the planner's system prompt, `dispatch()`'s
+  branch, and `_facts_from_hops()` (which keeps `risk`'s `greenwashing_risk_score` and
+  `ml_risk`'s `composition_anomaly_score`/`composition_anomaly_tier` under distinctly-named keys,
+  confirmed by a new test that both survive together in one `synthesize()` call without
+  colliding). **Deliberately not a new top-level single-hop route or REST endpoint** — the
+  value here is specifically in combination with document evidence via `synthesize()`, which is
+  already reachable through the existing `multi_hop` route/`/ask` endpoint.
+- **The concrete "what does this add" answer**: `risk` (Tier 2) only succeeds for the 5
+  issuer-verified ETFs (4 scorable) — every other fund's multi-hop answer today would combine
+  document evidence with *zero* quantitative grounding, or fail the `risk` hop outright. `ml_risk`
+  fills that gap for any fund with a claimed rating and composition data (~41k funds once
+  Postgres is backfilled), so a question like "is this fund's KIID consistent with its rating,
+  and does its portfolio composition look unusual?" can get one synthesized answer citing both a
+  real disclosure passage *and* a real, quantified composition-anomaly score.
+- **Tests**: 4 new in `test_ml_risk_agent.py` (fund-not-found, score/persist/audit-log, connection
+  ownership, model-caching) + 7 new in `test_supervisor.py` (missing-fund_id error, success,
+  failure-becomes-hop-error, facts extraction under distinct keys, risk+ml_risk coexisting in one
+  `synthesize()` call, and two `build_graph()` end-to-end multi-hop chains) — 245 tests total
+  passing, `ruff check .` clean.
+- Confirmed `ui/`'s `ResultView.tsx` needs **no change** — its `MultiHopResult` plan/trace
+  rendering iterates `data.plan`/`data.trace` generically by hop name (read directly to confirm,
+  not assumed), so `ml_risk` renders as a plan-badge automatically.
+- Docs: CLAUDE.md (decision #6 + #8 updates), ARCHITECTURE.md (agent table row + mermaid diagram +
+  MCP-boundary note matching `risk_agent.py`'s own documented convention), DATA.md,
+  RESPONSIBLE_AI.md, ROADMAP.md.
+
+**Deviations from the original plan:** none structural — this followed the extension points
+Phase 8c's multi-hop design was explicitly built to support (`_PLANNABLE_HOPS`, `dispatch()`,
+`_facts_from_hops()`). The one real constraint surfaced: `ml_risk_agent.score_fund_composition()`
+requires both (a) the live Postgres `funds` table backfilled with Phase 9's 41 composition columns
+and (b) a trained model artifact reachable by the deployed container — **neither exists live yet**
+(same gap Phase 9 already flagged: no live Postgres credentials this session, and the artifact is
+gitignored/local-only, never baked into the container image). So this hop is real, tested code
+that will fail cleanly (a recorded `hop_errors` entry, not a crash — same non-crashing contract
+every other hop already has) if exercised against the live deployment today, exactly like `risk`
+already does for any fund outside its 4 scorable ISINs.
+
+**Next step:** once live Postgres has the Phase 9 columns backfilled (see Phase 9's own next
+step), the model artifact still needs a real deployment story — either bake
+`ml/artifacts/greenwashing_rating_classifier.joblib` into the Docker image at build time (simplest;
+the file is ~11MB, small enough) or have the Container App train-and-cache it once on first use
+from a mounted/blob location. Once either exists, live-verify a real `multi_hop` request that
+chains `ml_risk` + `evidence` against the deployed API, the same way Phase 8e live-verified the
+original multi-hop chain.
+
+---
+
 ## Phase 9 — Tier 1 composition-anomaly ML model
 
 **Completed:** 2026-08-16

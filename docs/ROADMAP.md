@@ -307,3 +307,22 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       situation. Also not done this pass, by deliberate scope choice: a new LangGraph agent node
       or API route surfacing this signal directly (it's reachable today only via the NL2SQL agent
       once live data exists).
+
+### Phase 9b — wire the ML signal into multi-hop synthesis
+
+- [x] `agents/ml_risk_agent.py` (new) — Postgres-wired caller of
+      `ml/greenwashing_risk_model.py`, mirroring `risk_agent.score_fund()`'s DI/persist/audit-log
+      shape; loads the trained artifact once and caches it (no in-request training)
+- [x] `agents/supervisor.py`: `ml_risk` added as a fourth plannable `multi_hop` hop
+      (`_PLANNABLE_HOPS`, planner prompt, `dispatch()`, `_facts_from_hops()`) — deliberately kept
+      under a distinctly-named fact (`composition_anomaly_score`, never merged with `risk`'s
+      `greenwashing_risk_score`); deliberately **not** a new top-level route or REST endpoint
+- [x] 11 new tests (4 in `test_ml_risk_agent.py`, 7 in `test_supervisor.py`, incl. a combined
+      risk+ml_risk multi-hop case) — 245 total passing, `ruff check .` clean
+- [x] `ui/`'s `ResultView.tsx` needed **no change** — its multi-hop plan/trace rendering is
+      already generic over hop names, confirmed by reading it directly
+- [x] Docs: CLAUDE.md (decision #6 + #8 updates), ARCHITECTURE.md (agent table + diagram),
+      DATA.md, RESPONSIBLE_AI.md
+- [ ] **Not live-verified** — same live-Postgres-backfill dependency as the Phase 9 item above,
+      plus the model artifact itself would need to ship with the deployed container image (it's
+      currently gitignored, trained on-demand locally only); neither attempted this session

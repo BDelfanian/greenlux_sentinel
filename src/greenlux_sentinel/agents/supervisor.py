@@ -13,13 +13,24 @@ Phase 4 scope wired the five original read-only-or-single-gate specialists — s
 risk_agent, query_optimizer_agent, dashboard_agent, report_agent — each a single-hop leaf route
 straight to END. Phase 8b added a sixth single-hop leaf, evidence_agent. Phase 8c (this revision)
 adds a seventh route, "multi_hop", that does NOT go straight to a single specialist: a planner
-node LLM-picks an ordered subset of {sql, risk, evidence}, a dispatch node runs them one at a
+node LLM-picks an ordered subset of _PLANNABLE_HOPS, a dispatch node runs them one at a
 time (each hop's own try/except-and-record-not-raise contract, same as every run_*() below),
 then a synthesize node calls evidence_agent.answer_with_evidence() with the gathered hop results
 as precomputed_facts to produce one final cited-or-abstaining answer. The six original single-hop
 routes are completely untouched by this — same nodes, same edges straight to END — so a request
 that already knows which one specialist it needs (or the five dedicated REST endpoints in
 api/app.py, which call agent functions directly and never touch this graph at all) is unaffected.
+
+Phase 9b added a fourth plannable hop, "ml_risk" (`agents/ml_risk_agent.score_fund_composition`) —
+the Phase 9 Tier 1 composition-anomaly ML signal, alongside "risk"'s Tier 2 holdings-based gap.
+Deliberately a plannable *hop*, not a new top-level single-hop route/REST endpoint (out of scope
+for what prompted it — see docs/PROGRESS_LOG.md's Phase 9b entry): its value is specifically in
+`synthesize()` combining it with document evidence, and it's already reachable that way. Unlike
+"risk" (5 issuer-verified ETFs only), "ml_risk" works for any fund with a claimed rating and
+Tier 1 composition data once Postgres is backfilled (~41k funds) — the planner can include both
+for the 4 funds that have both signals, or just "ml_risk" for everything else. The two signals are
+kept in distinctly-named facts (never merged into one number) so `evidence_agent`'s LLM prompt —
+and the final synthesized answer — cannot conflate them (CLAUDE.md decision #8).
 
 report_agent's route only calls draft_report() — never publish_report()/reject_report(). The
 human-approval gate (docs/RESPONSIBLE_AI.md#human-in-the-loop-gates) is a decision made outside
@@ -46,6 +57,7 @@ from langgraph.graph import END, StateGraph
 from greenlux_sentinel.agents import (
     dashboard_agent,
     evidence_agent,
+    ml_risk_agent,
     query_optimizer_agent,
     report_agent,
     risk_agent,
@@ -69,32 +81,40 @@ nothing else.
 - report: a request to draft a multilingual fund report.
 - evidence: a question that needs document evidence (fund disclosures, SFDR/CSSF regulatory \
 text) to answer, but doesn't also need combining several other specialists' output first.
-- multi_hop: a complex question that needs combining structured data (SQL and/or risk score) \
+- multi_hop: a complex question that needs combining structured data (SQL and/or risk score(s)) \
 *with* document evidence to produce one synthesized, cited answer.
 
 Reply with exactly one of: sql, risk, query_optimizer, dashboard, report, evidence, multi_hop
 """
 
-# The three specialists a multi-hop plan may chain -- deliberately excludes query_optimizer
+# The four specialists a multi-hop plan may chain -- deliberately excludes query_optimizer
 # (write-side/gated, not a fact-gathering step) and dashboard/report (presentational/gated
 # finalization, not evidence-gathering either). evidence_agent.answer_with_evidence() is also
 # always the synthesis step at the end (see synthesize()), so including "evidence" as one of the
 # *plannable* hops lets a plan front-load it (e.g. ["evidence"] alone, or ["sql", "evidence"]) --
-# synthesize() just reuses that result rather than calling it twice.
-_PLANNABLE_HOPS = ("sql", "risk", "evidence")
+# synthesize() just reuses that result rather than calling it twice. "risk" and "ml_risk" (Phase
+# 9b) are two DIFFERENT quantitative signals, not alternatives of each other -- see this module's
+# docstring and CLAUDE.md decision #8.
+_PLANNABLE_HOPS = ("sql", "risk", "ml_risk", "evidence")
 _MAX_HOPS = 5  # portfolio-scale cap, same spirit as etl_agent._GLEIF_LOOKUP_LIMIT
 _DEFAULT_PLAN = ["evidence"]
 
 _PLANNER_SYSTEM_PROMPT = """The analyst's request needs multiple steps to answer. Decide which \
-specialists to run, in order, from: sql, risk, evidence. Reply with ONLY a JSON array of \
+specialists to run, in order, from: sql, risk, ml_risk, evidence. Reply with ONLY a JSON array of \
 specialist names, nothing else -- no markdown, no explanation.
 
 - sql: pull supporting facts/rows from the fund database.
-- risk: compute the fund's Greenwashing Risk Score (requires a fund_id).
+- risk: compute the fund's Tier 2 Greenwashing Risk Score, from its real security-level holdings \
+vs. its claim (requires a fund_id; only works for the small set of funds with verified holdings \
+data -- if unsure whether a fund has this, include ml_risk too as a fallback).
+- ml_risk: compute the fund's Tier 1 composition-anomaly score, a different ML-based signal for \
+whether the fund's claimed sustainability rating looks typical for its objective portfolio \
+composition (requires a fund_id; works for far more funds than risk). Not a replacement for risk \
+-- include both when the question calls for the fullest possible risk picture.
 - evidence: retrieve and cite document evidence, and produce the final synthesized answer -- \
 almost always include this, usually last.
 
-Example: ["sql", "risk", "evidence"]
+Example: ["sql", "risk", "ml_risk", "evidence"]
 If unsure, reply with: ["evidence"]
 """
 
@@ -208,8 +228,10 @@ def plan_request(state: SupervisorState, llm: BaseChatModel | None = None) -> di
 
 
 def _facts_from_hops(hop_results: dict[str, Any]) -> dict[str, Any]:
-    """Flatten whatever the sql/risk hops produced into the flat scalar-fact shape
-    evidence_agent.answer_with_evidence()'s precomputed_facts expects."""
+    """Flatten whatever the sql/risk/ml_risk hops produced into the flat scalar-fact shape
+    evidence_agent.answer_with_evidence()'s precomputed_facts expects. risk and ml_risk are kept
+    under distinctly-named keys -- never merged into one "risk score" -- so the LLM prompt this
+    feeds into cannot conflate the two different signals (CLAUDE.md decision #8)."""
     facts: dict[str, Any] = {}
     risk = hop_results.get("risk")
     if risk:
@@ -217,6 +239,14 @@ def _facts_from_hops(hop_results: dict[str, Any]) -> dict[str, Any]:
             facts["greenwashing_risk_score"] = risk["risk_score"]
         if "explanation" in risk:
             facts["risk_explanation"] = risk["explanation"]
+    ml_risk = hop_results.get("ml_risk")
+    if ml_risk:
+        if "composition_anomaly_score" in ml_risk:
+            facts["composition_anomaly_score"] = ml_risk["composition_anomaly_score"]
+        if "composition_anomaly_tier" in ml_risk:
+            facts["composition_anomaly_tier"] = ml_risk["composition_anomaly_tier"]
+        if "predicted_rating_bucket" in ml_risk:
+            facts["ml_predicted_rating_bucket"] = ml_risk["predicted_rating_bucket"]
     sql = hop_results.get("sql")
     if sql and sql.get("rows"):
         for key, value in sql["rows"][0].items():
@@ -247,6 +277,10 @@ def dispatch(state: SupervisorState) -> dict[str, Any]:
             if not fund_id:
                 raise ValueError("risk hop requires a fund_id in the initial state")
             result = risk_agent.score_fund(fund_id)
+        elif next_hop == "ml_risk":
+            if not fund_id:
+                raise ValueError("ml_risk hop requires a fund_id in the initial state")
+            result = ml_risk_agent.score_fund_composition(fund_id)
         else:  # "evidence" -- the only other _PLANNABLE_HOPS member
             result = evidence_agent.answer_with_evidence(state["request"], fund_id=fund_id)
         hop_results[next_hop] = result

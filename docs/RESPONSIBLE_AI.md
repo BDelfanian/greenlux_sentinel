@@ -22,6 +22,11 @@
    by construction** — `train()` returns real feature importances and a full held-out metrics
    report (accuracy, macro-F1, per-class precision/recall, confusion matrix), not just a score —
    so its behavior can be audited directly, not just its outputs validated after the fact.
+   **Since Phase 9b**, this score can also flow into a `multi_hop` synthesized answer via
+   `agents/ml_risk_agent.py` — Principle 5's grounding guardrail still applies to that answer's
+   *document* citations, and the composition-anomaly value is passed to the drafting LLM under its
+   own distinct fact key (never merged with Tier 2's `risk_score`), so a synthesized answer can't
+   misattribute one signal's number to the other.
 4. **PII redaction.** Any free-text fields ingested (e.g. company descriptions) pass through a
    redaction step before being stored or surfaced, even though the datasets in use are
    company/fund-level, not individual-level — defensive by default.
