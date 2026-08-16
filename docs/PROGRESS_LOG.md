@@ -10,6 +10,35 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9g — case-file poster (docs/assets/case_file_poster.png)
+
+**Completed:** 2026-08-16
+
+**Done:** Built a one-page "case file / dossier" poster documenting the same live
+`ml_risk` + `evidence` multi-hop example used in `docs/assets/demo.gif` (fund
+`0P0001EVL3`/ISIN `IE00BFNM3G45`, question "What does this fund's KIID say about ESG exclusions,
+and is that consistent with its composition-anomaly score from the ml_risk model?"). Captured
+three stable-anchored Playwright screenshots against the live public UI (routing/plan badges,
+the synthesized answer, and the document-citations panel), anchored on code-defined `h3` text and
+DOM structure rather than any LLM-generated wording so the capture script stays valid across runs.
+Sourced Fraunces (display serif) and IBM Plex Mono (labels/data) as local woff2 files and
+generated the QR code locally via the `qrcode` Python package (no external QR service). Assembled
+a self-contained HTML/CSS document — fonts, the three screenshots, and the QR code all inlined as
+base64 `data:` URIs, confirmed by grep that no external `src=`/`url()` references remain — and
+rendered it to a flattened PNG via a headless Playwright Chromium screenshot
+(2720×4974px @2x). Linked into `README.md`'s Demo section as `docs/assets/case_file_poster.png`.
+
+**Deviations from the original plan:** none — this was a direct, one-shot design/build task
+(poster generation), not a change to any agent, schema, or deployed service; no code paths
+touched.
+
+**Next step:** none blocking. If the poster's example ever needs to change (e.g. a different
+showcase question), rerun the capture script referenced in this entry's session transcript against
+the live UI and rebuild — the screenshots and JSON facts must come from the same run to avoid the
+copy/data mismatch this design deliberately avoided.
+
+---
+
 ## Phase 9f — the ml_risk planner unreliability was a real problem, not just "nondeterminism"
 
 **Completed:** 2026-08-16

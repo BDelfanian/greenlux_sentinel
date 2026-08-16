@@ -453,3 +453,11 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
 - [x] 6 new tests (trigger fires/doesn't fire, insertion position with/without an `evidence` hop,
       no-op when already planned, `_MAX_HOPS` cap respected) — 269 tests total passing,
       `ruff check .` clean.
+
+### Phase 9g — case-file poster
+
+- [x] One-page "case file / dossier" poster (`docs/assets/case_file_poster.png`) documenting the
+      same live `ml_risk` + `evidence` multi-hop example as `demo.gif`: three stable-anchored
+      Playwright screenshots (routing/plan, synthesized answer, document citations) from the same
+      live run, self-contained HTML/CSS with fonts/screenshots/QR code base64-inlined (no external
+      requests, confirmed by grep), rendered to a flattened PNG. Linked from README's Demo section.

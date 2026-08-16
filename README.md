@@ -145,6 +145,16 @@ works, or [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md)'s Phase 9b/9c entries for
 (an Azure AI Search OData filter, a schema gap on live Postgres, the evidence hop originally
 running blind to earlier hops' facts) found and fixed while getting this working end to end.
 
+### Case file
+
+[![Case file poster: GreenLux Sentinel documenting the KIID + composition-anomaly example above as a dark, dossier-styled one-pager with routing, verdict, and citation exhibits](docs/assets/case_file_poster.png)](docs/assets/case_file_poster.png)
+
+A one-page "case file" summary of the same live example above, generated from real Playwright
+screenshots of the deployed UI and the real API response for the same run (fund `IE00BFNM3G45`,
+composition-anomaly score 49.9/Medium, 2 of 5 KIID sources cited) — self-contained HTML/CSS
+(base64-inlined fonts, screenshots, and a locally-generated QR code, no external requests)
+rendered to a flattened PNG.
+
 ## Deployment
 
 Live on Azure — 11 distinct services, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#azure-service-map)
