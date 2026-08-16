@@ -299,14 +299,19 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       1-vs-Tier 2 cross-check — executed end to end against real data, not hand-typed numbers
 - [x] Full documentation pass: CLAUDE.md (new decision #8), DATA.md (new section), ARCHITECTURE.md,
       REQUIREMENTS_TRACEABILITY.md, RESPONSIBLE_AI.md, README.md
-- [ ] **Not done — wire into `etl_agent.run_ingestion()` and run `train_greenwashing_risk_model.
-      main()` + `score_all_funds()` against live Azure Postgres.** No live Postgres/Cosmos
-      credentials were available in the session that built this phase — the schema/loader/model
-      code is real and unit-tested, but has only been trained/evaluated against the local,
-      gitignored `data/raw/*.csv` files, matching the honesty pattern Phase 1 used for the same
-      situation. Also not done this pass, by deliberate scope choice: a new LangGraph agent node
-      or API route surfacing this signal directly (it's reachable today only via the NL2SQL agent
-      once live data exists).
+- [x] **Live Postgres migrated and backfilled** (Phase 9b, same session as the multi-hop wiring
+      below) — the user supplied the Key Vault admin password and a temporary firewall rule; the
+      41 columns + `fund_sustainability_anomaly_scores` table were added live, all 67,098 funds
+      reloaded with real composition data, and `score_all_funds()` wrote 40,737 real anomaly-score
+      rows. Verified directly against the live DB (not assumed): `sector_technology`/
+      `involvement_thermal_coal` etc. populated for every row, demo fund `0P00018CYB` shows the
+      exact same values live as the local run. See docs/PROGRESS_LOG.md's Phase 9b entry.
+- [ ] **Still not done — wire into `etl_agent.run_ingestion()`.** The live backfill above was run
+      as a one-off script calling the same loader/scoring functions directly, not through
+      `etl_agent`, so a *future* scheduled ETL run (the Functions timer trigger) will reload `funds`
+      but will **not** re-run `score_all_funds()` automatically — the anomaly-score table will grow
+      stale after the next data refresh unless this gets wired in. Deliberate scope decision for
+      this pass, not an oversight; flagged as the concrete next step.
 
 ### Phase 9b — wire the ML signal into multi-hop synthesis
 
@@ -323,6 +328,33 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       already generic over hop names, confirmed by reading it directly
 - [x] Docs: CLAUDE.md (decision #6 + #8 updates), ARCHITECTURE.md (agent table + diagram),
       DATA.md, RESPONSIBLE_AI.md
-- [ ] **Not live-verified** — same live-Postgres-backfill dependency as the Phase 9 item above,
-      plus the model artifact itself would need to ship with the deployed container image (it's
-      currently gitignored, trained on-demand locally only); neither attempted this session
+- [x] **Live-verified, end to end, over the public internet.** Live Postgres backfilled (schema
+      migration + full 67,098-row reload + 40,737-row `fund_sustainability_anomaly_scores` batch
+      score, all via a temporary firewall rule + the Key-Vault admin password, both supplied by
+      the user since Azure IAM/secret actions are blocked for the agent by design). Model artifact
+      uploaded to the ADLS Gen2 landing storage account (`models/` prefix) after granting the
+      acting identity `Storage Blob Data Contributor` (Owner alone doesn't include storage
+      data-plane access — a real Azure RBAC gap hit and fixed live, not assumed). Deploy approved
+      and completed successfully (`ca-greenlux-agents-dev` + `ca-greenlux-ui-dev` both updated).
+      Verified three ways: (1) `ml_risk_agent.score_fund_composition()` called directly against
+      live Postgres — real read, score, persist, and audit-log row; (2) a real HTTP POST to the
+      live operator UI's own public URL (`ca-greenlux-ui-dev...azurecontainerapps.io`, no browser,
+      same no-JS progressive-enhancement technique as Phase 7/8) with a question explicitly asking
+      to combine the ML signal with the fund's KIID — the planner correctly chose
+      `["ml_risk", "evidence"]`, the `ml_risk` hop succeeded (`composition_anomaly_score: 14.82`,
+      matching every local/direct-DB result exactly), and `evidence` retrieved 5 real passages
+      from the live Azure AI Search index; (3) a less pointed phrasing of the same question first,
+      to see real (not cherry-picked) planner behavior — the LLM planner chose `["evidence"]` alone
+      for that phrasing, i.e. it does not reliably include `ml_risk` unless the question names the
+      signal fairly explicitly, a real characteristic of the live system worth knowing, not a bug.
+      **One genuine, non-obvious finding**: even with `ml_risk`'s fact correctly gathered
+      (confirmed present in `hop_results`), the final synthesized answer abstained
+      (`"I don't know -- insufficient evidence"`, `abstained: true`) rather than stating the
+      composition-anomaly number — `evidence_agent`'s `_DRAFT_SYSTEM_PROMPT` requires a `[doc:<id>]`
+      citation for "every claim," and a precomputed numeric fact has no document id to cite, so the
+      grounding-guardrail-following LLM conservatively declines rather than state an uncited
+      number. This is the guardrail behaving safely (Principle 5), not a crash — but it means
+      today, a synthesized answer that actually *states* the ML score inline alongside document
+      evidence isn't reliably produced; see docs/PROGRESS_LOG.md's entry for the real transcripts
+      and the follow-up this suggests (a fact-citation form distinct from `[doc:<id>]`, e.g.
+      `[fact:composition_anomaly_score]`, not built this pass).

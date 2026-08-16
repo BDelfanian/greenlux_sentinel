@@ -10,6 +10,77 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9b (live) — deploying and live-verifying the ML signal, end to end
+
+**Completed:** 2026-08-16
+
+**Done:** Everything Phase 9/9b's own entries below flagged as "not live-verified" was actually
+done live this session, in direct response to the user asking "is this model already deployable
+and usable in the UI?" and then "do all" against the four gaps identified (commit/push, ship the
+model artifact, backfill live Postgres, approve the CI deploy):
+
+- **Model artifact shipped.** Uploaded `greenwashing_rating_classifier.joblib` to the ADLS Gen2
+  landing storage account (`greenluxlanddevidckowude`, `landing` container, `models/` prefix) --
+  the same account/pattern `etl_agent._resolve_data_dir()` already used for raw CSVs.
+  `ml_risk_agent._resolve_model_path()` (new) falls back to downloading it from there when the
+  local gitignored path is missing, exactly mirroring `_resolve_data_dir()`'s logic; 3 new tests.
+- **Live Postgres migrated and backfilled.** Schema migration (41 `ALTER TABLE ADD COLUMN` +
+  `CREATE TABLE fund_sustainability_anomaly_scores`) applied directly against
+  `psql-greenlux-dev-idckowude2cgc`. All 67,098 funds reloaded via the real
+  `load_funds_postgres.load()` path -- composition columns now populated for every row, confirmed
+  directly (`sector_technology`/`involvement_thermal_coal` etc. non-null for all 67,098; demo fund
+  `0P00018CYB` shows identical values to the local run). `score_all_funds()` then wrote 40,737 real
+  `fund_sustainability_anomaly_scores` rows.
+- **CI deploy approved and completed** -- a stale queued deploy run (from an intermediate commit)
+  was rejected first so the *complete* commit actually got built; `ca-greenlux-agents-dev` and
+  `ca-greenlux-ui-dev` both updated successfully, health check green.
+- **Live-verified three separate ways**, not just "deployed without crashing":
+  1. `ml_risk_agent.score_fund_composition("0P00018CYB")` called directly against live Postgres --
+     real read, real model score, real persisted row, real audit-log row.
+  2. A real HTTP POST straight to the live operator UI's own public URL
+     (`ca-greenlux-ui-dev...azurecontainerapps.io`), no browser -- same no-JS
+     progressive-enhancement Server Action technique Phase 7/8 already established. A question
+     explicitly asking to combine the ML signal with the fund's KIID correctly planned
+     `["ml_risk", "evidence"]`; the `ml_risk` hop returned `composition_anomaly_score: 14.82`,
+     matching every earlier local/direct-DB result exactly; `evidence` retrieved 5 real passages
+     from the live Azure AI Search index.
+  3. A less pointed phrasing of the same underlying question tried first, deliberately, to see the
+     planner's *real* behavior rather than only a cherry-picked success -- it planned `["evidence"]`
+     alone, i.e. the LLM planner does not reliably reach for `ml_risk` unless a question names the
+     signal fairly explicitly. Worth knowing, not a bug.
+- **One genuine, non-obvious finding surfaced by this live test, not by unit tests**: even with
+  `ml_risk`'s fact correctly gathered (confirmed present in `hop_results`), the *final synthesized
+  answer* abstained -- `"I don't know -- insufficient evidence"`, `abstained: true` -- rather than
+  stating the composition-anomaly number inline. Root cause: `evidence_agent._DRAFT_SYSTEM_PROMPT`
+  requires a `[doc:<id>]` citation for "every claim," and a precomputed numeric fact (unlike a
+  retrieved passage) has no document id to cite -- so the grounding-guardrail-following LLM
+  conservatively abstains rather than state an uncited number. This is Principle 5's guardrail
+  behaving safely, not a crash or a wiring bug -- `ml_risk` genuinely works end to end -- but it
+  means a synthesized answer that actually *states* the ML score alongside document evidence isn't
+  reliably produced today.
+
+**Deviations from the original plan:** the user's own Azure identity (Owner on the subscription)
+turned out to lack `Storage Blob Data Contributor` on the storage account -- a real Azure RBAC gap
+(control-plane Owner does not imply data-plane blob access), hit and fixed live via
+`az role assignment create`, not assumed or worked around. Several Azure CLI actions (Key Vault
+secret reads, IAM role-assignment creation, Postgres firewall-rule create, approving the GitHub
+Actions production deploy) are deliberately blocked for the agent by this environment's own
+permission policy -- the user ran those specific commands themselves, each handed over as an exact
+copy-pasteable command, consistent with the existing memory note that Key Vault reads go through
+the user. The Postgres admin password and a temporary firewall rule (removed immediately after the
+migration) were used only transiently, never written to any file in the repo or committed.
+
+**Next step:** the abstention finding above is the real, concrete next thing worth fixing --
+either loosen `_DRAFT_SYSTEM_PROMPT` to accept a distinct citation form for precomputed facts (e.g.
+`[fact:composition_anomaly_score]`, separate from `[doc:<id>]`) so a fact-grounded claim isn't
+forced through the document-citation path, or accept the current conservative behavior as correct
+and instead improve the planner's prompt/examples so `ml_risk` is chosen more consistently for
+questions that would benefit from it. Also still open: wire `score_all_funds()` into
+`etl_agent.run_ingestion()` so the anomaly-score table doesn't go stale after the next scheduled
+data refresh (see ROADMAP.md's Phase 9 checklist).
+
+---
+
 ## Phase 9b — wire the ML composition-anomaly signal into multi-hop synthesis
 
 **Completed:** 2026-08-16
