@@ -104,8 +104,9 @@ See [DATA.md](DATA.md) for the full dataset breakdown. In short:
 - **Azure Cosmos DB (NoSQL/Core API)** — nested JSON documents: ETF holdings joined to
   company-level ESG ratings (depth: the risk model runs here). **Not** the Gremlin API — see
   [CLAUDE.md](../CLAUDE.md) for why that distinction matters.
-- **Azure AI Search** *(Phase 8, not yet deployed — see infra/README.md)* — the document-evidence
-  index (fund KIIDs/prospectuses + general SFDR/CSSF regulatory text) the Evidence Agent queries.
+- **Azure AI Search** — live since Phase 8e (`srch-greenlux-dev-idckowude2cgc`, confirmed running),
+  the document-evidence index (fund KIIDs/prospectuses + general SFDR/CSSF regulatory text) the
+  Evidence Agent queries.
   A separate service from Cosmos DB, not a repurposing of it — Cosmos's role here stays exactly
   what decision #3 above scopes it to.
 
@@ -115,7 +116,7 @@ See [DATA.md](DATA.md) for the full dataset breakdown. In short:
 |---|---|
 | Azure Database for PostgreSQL Flexible Server | Relational fund data + audit log |
 | Azure Cosmos DB (NoSQL API) | ESG holdings documents |
-| Azure AI Search *(Phase 8, authored not deployed)* | Document-evidence index for the Evidence Agent |
+| Azure AI Search | Document-evidence index for the Evidence Agent — live since Phase 8e |
 | Azure Blob Storage / ADLS Gen2 | Raw Kaggle files, landing zone before ETL |
 | Azure Functions (Consumption, Python, timer-triggered) | Scheduled ETL orchestration — resolved in favor of Functions over Data Factory in Phase 5 (`infra/modules/functions.bicep`): Python-native, matches `etl/*.py` directly with no pipeline-JSON translation layer, and Consumption pricing suits this project's once-a-day/on-demand run cadence |
 | Azure AI Foundry (Azure OpenAI models) | LLM backing all agents |

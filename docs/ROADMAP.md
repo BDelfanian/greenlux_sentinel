@@ -202,7 +202,7 @@ step — see below and docs/PROGRESS_LOG.md's top entry.
       graph database (deliberately scoped down for an 11-document corpus — see that entry too).
       `etl/load_documents_search.py` embeds + indexes into Azure AI Search. New
       `document_citations` Postgres table. Azure AI Search + a second OpenAI embedding deployment
-      authored in Bicep, **not deployed** (infra/README.md's Phase 8 note).
+      authored in Bicep at this point in the phase — promoted live in 8e below, not still pending.
 - [x] **8b — evidence agent.** `mcp_servers/search_server.py` (hybrid search, OR-shaped
       fund/regulatory filter), `guardrails/grounding.py` (Principle 5: cite a retrieved doc or
       abstain), `agents/evidence_agent.py`, `POST /evidence`. 24 new tests, 190 total passing.

@@ -4,14 +4,13 @@ This is what makes the dashboard "dynamic, not static" (docs/REQUIREMENTS_TRACEA
 row 7) — the agent picks/parameterizes a template based on the analyst's NL question rather
 than the dashboard shipping with a fixed, pre-built report.
 
-TODO(Phase 4):
-    - Fill in real DAX once the Power BI dataset schema (from Postgres/Cosmos) is published
-    - Keep templates parameterized by fund_id / category / date range, not hardcoded
+Real DAX against the real published Power BI push dataset (`Funds` + `FundRiskScores` tables,
+one relationship on `fund_id` — see docs/PROGRESS_LOG.md's Phase 4 entry), not a placeholder —
+live-verified end to end via the Dashboard Agent's real `executeQueries` calls.
 """
 
 from __future__ import annotations
 
-# Placeholder — replace with real measures once the Power BI dataset is published.
 RISK_SCORE_BY_CATEGORY = """
 EVALUATE
 SUMMARIZECOLUMNS(
