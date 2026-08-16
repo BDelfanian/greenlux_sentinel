@@ -4,6 +4,8 @@ these tests don't depend on a real trained artifact existing on disk."""
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -47,6 +49,7 @@ class TestScoreFundComposition:
     def test_scores_persists_and_audit_logs(self):
         conn, cur = self._conn_with_row()
         with (
+            patch("greenlux_sentinel.agents.ml_risk_agent._resolve_model_path", return_value=Path("dummy")),
             patch("greenlux_sentinel.ml.greenwashing_risk_model.load_model", return_value="fake-bundle") as load,
             patch("greenlux_sentinel.ml.greenwashing_risk_model.score", return_value=dict(_SCORE_RESULT)) as score,
             patch("greenlux_sentinel.mcp_servers.postgres_server.write_audit_log") as audit,
@@ -70,6 +73,7 @@ class TestScoreFundComposition:
     def test_does_not_close_caller_owned_connection(self):
         conn, _ = self._conn_with_row()
         with (
+            patch("greenlux_sentinel.agents.ml_risk_agent._resolve_model_path", return_value=Path("dummy")),
             patch("greenlux_sentinel.ml.greenwashing_risk_model.load_model", return_value="fake-bundle"),
             patch("greenlux_sentinel.ml.greenwashing_risk_model.score", return_value=dict(_SCORE_RESULT)),
             patch("greenlux_sentinel.mcp_servers.postgres_server.write_audit_log"),
@@ -80,6 +84,7 @@ class TestScoreFundComposition:
     def test_model_loaded_once_and_cached_across_calls(self):
         conn, _ = self._conn_with_row()
         with (
+            patch("greenlux_sentinel.agents.ml_risk_agent._resolve_model_path", return_value=Path("dummy")),
             patch("greenlux_sentinel.ml.greenwashing_risk_model.load_model", return_value="fake-bundle") as load,
             patch("greenlux_sentinel.ml.greenwashing_risk_model.score", return_value=dict(_SCORE_RESULT)),
             patch("greenlux_sentinel.mcp_servers.postgres_server.write_audit_log"),
@@ -87,3 +92,39 @@ class TestScoreFundComposition:
             ml_risk_agent.score_fund_composition("F1", conn=conn)
             ml_risk_agent.score_fund_composition("F1", conn=conn)
         load.assert_called_once()
+
+
+class TestResolveModelPath:
+    def test_returns_local_artifact_path_when_present(self, tmp_path):
+        fake_artifact = tmp_path / "model.joblib"
+        fake_artifact.write_bytes(b"fake")
+        with patch("greenlux_sentinel.ml.greenwashing_risk_model.MODEL_ARTIFACT_PATH", fake_artifact):
+            assert ml_risk_agent._resolve_model_path() == fake_artifact
+
+    def test_downloads_from_landing_container_when_missing_locally(self, tmp_path):
+        missing_artifact = tmp_path / "does_not_exist.joblib"
+        container = MagicMock()
+        container.download_blob.return_value.readall.return_value = b"joblib-bytes"
+
+        with tempfile.TemporaryDirectory() as fake_tempdir:
+            with (
+                patch("greenlux_sentinel.ml.greenwashing_risk_model.MODEL_ARTIFACT_PATH", missing_artifact),
+                patch("tempfile.mkdtemp", return_value=fake_tempdir),
+            ):
+                result = ml_risk_agent._resolve_model_path(container=container)
+
+            assert result == Path(fake_tempdir) / missing_artifact.name
+            assert result.read_bytes() == b"joblib-bytes"
+        container.download_blob.assert_called_once_with(ml_risk_agent._MODEL_BLOB_NAME)
+
+    def test_raises_clearly_when_missing_locally_and_no_landing_storage_configured(self, tmp_path):
+        missing_artifact = tmp_path / "does_not_exist.joblib"
+        with (
+            patch("greenlux_sentinel.ml.greenwashing_risk_model.MODEL_ARTIFACT_PATH", missing_artifact),
+            patch(
+                "greenlux_sentinel.config.get_settings",
+                return_value=SimpleNamespace(landing_storage_account_name=""),
+            ),
+            pytest.raises(FileNotFoundError),
+        ):
+            ml_risk_agent._resolve_model_path()

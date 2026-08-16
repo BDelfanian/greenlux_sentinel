@@ -20,31 +20,71 @@ documents for its own hardcoded, non-analyst-facing reads/writes (not the dynami
 SQL `run_readonly_query` is for). Only the audit-log write goes through the MCP tool.
 
 Loads the trained model artifact via `ml.greenwashing_risk_model.load_model()` and caches it at
-module scope for the life of the process — this project has no MLOps
-retraining/serving pipeline (docs/RESPONSIBLE_AI.md), so a missing artifact
-(`ml/artifacts/greenwashing_rating_classifier.joblib`, gitignored, produced by
-`python -m greenlux_sentinel.ml.train_greenwashing_risk_model`) is an operational precondition,
-not something this agent trains on the fly inside a request.
+module scope for the life of the process — this project has no MLOps retraining/serving pipeline
+(docs/RESPONSIBLE_AI.md), so training on the fly inside a request is deliberately not done here.
+If the artifact (`ml/artifacts/greenwashing_rating_classifier.joblib`, gitignored, produced by
+`python -m greenlux_sentinel.ml.train_greenwashing_risk_model`) isn't present locally — the case
+for a deployed container, whose image doesn't include the gitignored `ml/artifacts/` directory —
+`_resolve_model_path()` falls back to downloading it from the same ADLS Gen2 landing storage
+account `agents/etl_agent._resolve_data_dir()` already uses for the raw Kaggle CSVs, under a
+`models/` prefix. Same access pattern: `DefaultAzureCredential` + the caller's managed identity,
+no storage key.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from greenlux_sentinel.ml import greenwashing_risk_model as model
 
 if TYPE_CHECKING:
     import psycopg
+    from azure.storage.blob import ContainerClient
 
 _SELECT_COLUMNS = ["fund_id", "isin", "sustainability_rating", *model.FEATURE_COLUMNS]
 
+_MODEL_BLOB_CONTAINER_NAME = "landing"
+_MODEL_BLOB_NAME = "models/greenwashing_rating_classifier.joblib"
+
 _cached_model: model.TrainResult | None = None
+
+
+def _resolve_model_path(container: ContainerClient | None = None) -> Path:
+    """Return a local path to the trained model artifact, downloading it from Blob Storage into a
+    fresh temp file if it isn't already present locally (see module docstring). `container` is
+    for test injection only, matching `etl_agent._resolve_data_dir()`'s DI pattern."""
+    if model.MODEL_ARTIFACT_PATH.exists():
+        return model.MODEL_ARTIFACT_PATH
+
+    import tempfile
+
+    owns_container = container is None
+    if owns_container:
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import BlobServiceClient
+
+        from greenlux_sentinel.config import get_settings
+
+        settings = get_settings()
+        if not settings.landing_storage_account_name:
+            raise FileNotFoundError(
+                f"{model.MODEL_ARTIFACT_PATH} does not exist and LANDING_STORAGE_ACCOUNT_NAME is "
+                "not configured -- either train a model locally or set that env var"
+            )
+        account_url = f"https://{settings.landing_storage_account_name}.blob.core.windows.net"
+        service_client = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
+        container = service_client.get_container_client(_MODEL_BLOB_CONTAINER_NAME)
+
+    download_path = Path(tempfile.mkdtemp(prefix="greenlux-model-")) / model.MODEL_ARTIFACT_PATH.name
+    download_path.write_bytes(container.download_blob(_MODEL_BLOB_NAME).readall())
+    return download_path
 
 
 def _load_cached_model() -> model.TrainResult:
     global _cached_model
     if _cached_model is None:
-        _cached_model = model.load_model()
+        _cached_model = model.load_model(_resolve_model_path())
     return _cached_model
 
 
