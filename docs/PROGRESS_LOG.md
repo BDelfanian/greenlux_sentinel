@@ -10,6 +10,55 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9e — real bug found via the user's own live UI testing: NaN stored instead of NULL
+
+**Completed:** 2026-08-16
+
+**Done:** The user tested the deployed system directly (as suggested) and one of the three example
+questions surfaced a genuine data-correctness bug: the NL2SQL agent's `AVG(sustainability_rating)`
+for LU-domiciled funds returned the JSON string `"NaN"` instead of a number.
+
+**Root cause, confirmed precisely, not guessed:** `load_funds_postgres.load()`'s
+`combined.where(pd.notnull(combined), None).to_dict(orient="records")` cannot actually store
+`None` in a `float64` pandas column — pandas silently coerces the assignment back to `NaN`
+(confirmed locally: `.where(pd.notnull(df), None)` left `sustainability_rating` as `nan`, not
+`None`, for all 14,411 LU funds with a missing rating, out of 36,413 total). Postgres' `numeric`
+type — unlike most SQL databases — accepts `'NaN'` as a real stored value, not an error, so this
+went in silently. `AVG()`/`SUM()` over a `NaN` cell then poisons the whole aggregate (IEEE754 NaN
+propagates through arithmetic; `NULL` is simply excluded) — this is why `risk_agent`/`ml_risk`
+were never affected (both go through `pd.isna()`, which treats a stored `NaN` and a real `NULL`
+identically once read back via `pd.read_sql`), but raw SQL aggregates were silently wrong.
+
+**Fix:** `.astype(object)` before `.where()` forces every column to object dtype first, so `None`
+can actually be assigned per-cell. Applied to all three loaders sharing this exact pattern —
+`load_funds_postgres.py` (confirmed live impact) and `load_esg_cosmos.py`/
+`load_verified_holdings_cosmos.py` (same latent risk: a stored `NaN` there would fail
+`json.dumps()` with an invalid-JSON token when writing to Cosmos, not silently corrupt data, but
+never actually triggered/observed this session). New regression test in `test_etl_load.py`,
+confirmed to fail against the pre-fix code before confirming it passes against the fix.
+
+**Live data itself repaired, not just the code**: re-ran the corrected loader against live
+Postgres (user supplied the Key Vault password + a temporary firewall rule again, both cleaned up
+immediately after) — all 67,098 rows re-upserted. Verified directly against live Postgres: the
+user's exact query now returns `(36413, 3.1370329970002727)` — matching the local pandas
+computation exactly; zero cells anywhere in `funds`' core numeric columns still contain literal
+`'NaN'` (checked via a `LATERAL` cross-column scan, not just the one column that surfaced the bug).
+No ML re-scoring needed — `ml.greenwashing_risk_model`'s `pd.isna()`-based missingness handling
+was never affected by this bug, confirmed by reasoning through the code path, not assumed.
+
+263 tests passing, `ruff check .` clean. Deploy approved and completed successfully.
+
+**Deviations from the original plan:** none — this was an unplanned bug found by the user actually
+using the live system, exactly the kind of thing "live-verify, don't just write code" is meant to
+catch, and it caught something three separate agent-authored sessions (this repo's original Phase 1
+loader, Phase 9b's live backfill, Phase 9d's live re-backfill) had all missed.
+
+**Next step:** none blocking. Worth considering as a general pattern: any future loader touching
+mixed-dtype DataFrames should default to `.astype(object).where(...)`, not `.where(...)` alone —
+noted here so a future session doesn't reintroduce the same bug in a new loader.
+
+---
+
 ## Phase 9d — close the four status-review recommendations, live end to end
 
 **Completed:** 2026-08-16

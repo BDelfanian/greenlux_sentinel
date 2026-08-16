@@ -421,3 +421,18 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       total rows), confirmed directly against the live DB: the demo fund's v2 score (16.30) matches
       the local retraining exactly, `v1`/`v2` counts both correct. `npm run build` clean before
       deploy. 262 tests passing, `ruff check .` clean throughout.
+
+### Phase 9e — real bug found via live UI testing: NaN stored instead of NULL
+
+- [x] The user's own live testing of the NL2SQL example chip surfaced a genuine data-correctness
+      bug: `AVG(sustainability_rating)` for LU funds returned the string `"NaN"`. Root cause: all
+      three ETL loaders sharing `.where(pd.notnull(df), None)` on a mixed-dtype DataFrame silently
+      leave float `NaN` in place for numeric columns instead of `NULL` (pandas can't store `None`
+      in a `float64` column) — Postgres' `numeric` type accepts `NaN` as a real value, which then
+      poisons `AVG()`/`SUM()` via IEEE754 propagation. Fixed (`.astype(object)` before `.where()`)
+      in all three loaders, with a regression test confirmed to fail pre-fix and pass post-fix.
+- [x] **Live data itself repaired**, not just the code: corrected loader re-run against live
+      Postgres, verified directly — the user's exact query now returns a real number (3.137,
+      matching local pandas exactly), zero `NaN` cells remain anywhere in `funds`' core numeric
+      columns. No ML re-scoring needed (`pd.isna()`-based missingness handling was never affected).
+      263 tests passing, `ruff check .` clean, deploy approved and completed.
