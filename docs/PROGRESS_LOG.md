@@ -10,6 +10,43 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9f — the ml_risk planner unreliability was a real problem, not just "nondeterminism"
+
+**Completed:** 2026-08-16
+
+**Done:** The user re-tested the exact same example-chip question three more times live and hit
+the evidence-only-abstains outcome again. Tallying every real attempt this session with this exact
+question: **2 of 5 included `ml_risk`, 3 of 5 didn't** — a coin flip, not a rare edge case. Phase
+9c/9d's PROGRESS_LOG entries had characterized this as "the LLM planner does not reliably include
+ml_risk... worth knowing, not a bug." In hindsight that was too generous — a <50% success rate on
+the flagship example is a real reliability problem, not a curiosity, and deserved a real fix
+instead of continuing to describe it.
+
+**Fix:** `supervisor._parse_plan()` gained a deterministic backstop, `_ML_RISK_TRIGGER_PHRASES`
+(`"ml_risk"`, `"composition-anomaly"`, `"composition anomaly"`, `"composition_anomaly"`) — if any
+of these appear in the request text and the LLM's own plan omitted `ml_risk`, it's inserted
+(before `evidence` if present, so synthesis still runs last; appended otherwise), independent of
+whatever the LLM decided. This does not touch or weaken the LLM planning for anything else — a
+question that doesn't name the signal explicitly still goes through the LLM's own judgment
+unchanged. Verified directly against the exact real question text that had been failing: with the
+LLM simulated as stubbornly returning `["evidence"]` (its actual observed behavior 3 of 5 times),
+`_parse_plan()` now deterministically produces `["ml_risk", "evidence"]`.
+
+6 new tests covering the backstop (trigger fires/doesn't fire, insertion position with and without
+an `evidence` hop present, no-op when already planned, `_MAX_HOPS` cap respected) — 269 tests
+total passing, `ruff check .` clean.
+
+**Deviations from the original plan:** this reverses Phase 9c/9d's framing of the issue as
+acceptable nondeterminism. The right call, on reflection: a hard-to-reproduce edge case can
+reasonably be left as documented behavior; a coin-flip failure rate on the one example built
+specifically to showcase this session's flagship feature cannot.
+
+**Next step:** none blocking for this fix. Still open, unrelated: the citation-form issue Phase 9c
+fixed and question-phrasing sensitivity Phase 9c documented both remain real, separate
+characteristics of the live system, distinct from this specific reliability gap.
+
+---
+
 ## Phase 9e — real bug found via the user's own live UI testing: NaN stored instead of NULL
 
 **Completed:** 2026-08-16

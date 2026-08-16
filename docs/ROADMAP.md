@@ -346,7 +346,8 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       from the live Azure AI Search index; (3) a less pointed phrasing of the same question first,
       to see real (not cherry-picked) planner behavior — the LLM planner chose `["evidence"]` alone
       for that phrasing, i.e. it does not reliably include `ml_risk` unless the question names the
-      signal fairly explicitly, a real characteristic of the live system worth knowing, not a bug.
+      signal fairly explicitly — **this framing was later revised**: repeated live testing showed
+      this was a <50% success rate, not a minor curiosity, and Phase 9f added a deterministic fix.
       **One genuine, non-obvious finding, since fixed (see Phase 9c below)**: even with
       `ml_risk`'s fact correctly gathered (confirmed present in `hop_results`), the final
       synthesized answer abstained (`"I don't know -- insufficient evidence"`) rather than stating
@@ -436,3 +437,19 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       matching local pandas exactly), zero `NaN` cells remain anywhere in `funds`' core numeric
       columns. No ML re-scoring needed (`pd.isna()`-based missingness handling was never affected).
       263 tests passing, `ruff check .` clean, deploy approved and completed.
+
+### Phase 9f — fix the ml_risk planner reliability, don't just document it
+
+- [x] Repeated live testing (2 of 5 real attempts) confirmed Phase 9c/9d's "the planner doesn't
+      reliably include ml_risk, worth knowing" framing was too generous for a <50% success rate on
+      the flagship example — fixed instead of continuing to describe it.
+- [x] `supervisor._parse_plan()` gained a deterministic backstop: if the request text contains
+      `"ml_risk"`/`"composition-anomaly"`/`"composition anomaly"`/`"composition_anomaly"` and the
+      LLM's own plan omitted `ml_risk`, it's inserted (before `evidence` if present, appended
+      otherwise) — independent of the LLM's judgment. Verified directly: with the LLM simulated
+      returning its actual observed failure output (`["evidence"]`), `_parse_plan()` now
+      deterministically produces `["ml_risk", "evidence"]` for the real question text that had
+      been failing live.
+- [x] 6 new tests (trigger fires/doesn't fire, insertion position with/without an `evidence` hop,
+      no-op when already planned, `_MAX_HOPS` cap respected) — 269 tests total passing,
+      `ruff check .` clean.

@@ -120,6 +120,16 @@ If unsure, reply with: ["evidence"]
 
 _PLAN_JSON_RE = re.compile(r"\[.*\]", re.DOTALL)
 
+# Deterministic backstop for _parse_plan(), not just prompt wording -- confirmed live and
+# repeatedly (see docs/PROGRESS_LOG.md's Phase 9f entry) that the LLM planner is genuinely
+# unreliable at including "ml_risk" even when a question names the signal explicitly: across real
+# calls with the *same* question, it sometimes planned ["ml_risk", "evidence"] and sometimes just
+# ["evidence"]. A question that explicitly names the ml_risk/composition-anomaly signal should not
+# depend on chance to actually invoke it -- if any of these phrases appear in the request text and
+# the LLM's own plan omitted "ml_risk", it's inserted (right before "evidence" if present, so
+# synthesis still runs last; appended otherwise).
+_ML_RISK_TRIGGER_PHRASES = ("ml_risk", "composition-anomaly", "composition anomaly", "composition_anomaly")
+
 
 class SupervisorState(TypedDict, total=False):
     request: str
@@ -206,25 +216,38 @@ def run_evidence(state: SupervisorState) -> dict[str, Any]:
         return {"result": {}, "error": str(e)}
 
 
-def _parse_plan(text: str) -> list[str]:
+def _parse_plan(text: str, request: str = "") -> list[str]:
     match = _PLAN_JSON_RE.search(text.strip())
     if not match:
-        return list(_DEFAULT_PLAN)
-    try:
-        hops = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return list(_DEFAULT_PLAN)
-    valid = [h for h in hops if isinstance(h, str) and h in _PLANNABLE_HOPS][:_MAX_HOPS]
-    return valid or list(_DEFAULT_PLAN)
+        valid: list[str] = []
+    else:
+        try:
+            hops = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            hops = []
+        valid = [h for h in hops if isinstance(h, str) and h in _PLANNABLE_HOPS][:_MAX_HOPS]
+
+    if not valid:
+        valid = list(_DEFAULT_PLAN)
+
+    if "ml_risk" not in valid and any(phrase in request.lower() for phrase in _ML_RISK_TRIGGER_PHRASES):
+        insert_at = valid.index("evidence") if "evidence" in valid else len(valid)
+        valid = valid[:insert_at] + ["ml_risk"] + valid[insert_at:]
+        valid = valid[:_MAX_HOPS]
+
+    return valid
 
 
 def plan_request(state: SupervisorState, llm: BaseChatModel | None = None) -> dict[str, Any]:
     """LLM-plan an ordered list of hops (subset of _PLANNABLE_HOPS) for a multi_hop request.
     Falls back to _DEFAULT_PLAN on unparseable/empty output -- never raises, same fallback
-    philosophy as route_request()'s fallback-to-"sql"."""
+    philosophy as route_request()'s fallback-to-"sql". Also applies _ML_RISK_TRIGGER_PHRASES'
+    deterministic backstop -- see that constant's docstring for why the LLM's own judgment isn't
+    trusted alone here."""
     llm = llm or _default_llm()
     response = llm.invoke([("system", _PLANNER_SYSTEM_PROMPT), ("human", state["request"])])
-    return {"plan": _parse_plan(str(response.content)), "hop_results": {}, "hop_errors": {}, "trace": []}
+    plan = _parse_plan(str(response.content), state["request"])
+    return {"plan": plan, "hop_results": {}, "hop_errors": {}, "trace": []}
 
 
 def _facts_from_hops(hop_results: dict[str, Any]) -> dict[str, Any]:

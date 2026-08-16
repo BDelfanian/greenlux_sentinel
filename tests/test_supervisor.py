@@ -149,6 +149,41 @@ class TestParsePlan:
         oversized = json.dumps(["sql", "risk", "evidence"] * 3)
         assert len(supervisor._parse_plan(oversized)) <= supervisor._MAX_HOPS
 
+    def test_ml_risk_trigger_phrase_inserted_when_llm_omits_it(self):
+        # Regression test for real, repeated live failures (docs/PROGRESS_LOG.md's Phase 9f
+        # entry): the LLM planner is confirmed unreliable at including ml_risk even when the
+        # request explicitly names the signal -- this deterministic backstop must not depend on
+        # the LLM's own judgment.
+        plan = supervisor._parse_plan(
+            '["evidence"]', request="What does the ml_risk model say about this fund?"
+        )
+        assert plan == ["ml_risk", "evidence"]
+
+    def test_ml_risk_trigger_inserted_before_evidence_not_appended_after(self):
+        plan = supervisor._parse_plan(
+            '["sql", "evidence"]', request="combine sql facts with the composition-anomaly score"
+        )
+        assert plan == ["sql", "ml_risk", "evidence"]
+
+    def test_ml_risk_trigger_appended_when_no_evidence_hop_present(self):
+        plan = supervisor._parse_plan('["sql"]', request="show the composition anomaly numbers")
+        assert plan == ["sql", "ml_risk"]
+
+    def test_ml_risk_trigger_is_a_no_op_when_already_planned(self):
+        plan = supervisor._parse_plan(
+            '["ml_risk", "evidence"]', request="what does ml_risk say?"
+        )
+        assert plan == ["ml_risk", "evidence"]
+
+    def test_no_trigger_phrase_leaves_plan_unchanged(self):
+        plan = supervisor._parse_plan('["evidence"]', request="what does the KIID say about exclusions?")
+        assert plan == ["evidence"]
+
+    def test_trigger_phrase_respects_max_hops_cap(self):
+        oversized = json.dumps(["sql", "risk", "evidence"] * 2)  # 6 hops, already over _MAX_HOPS
+        plan = supervisor._parse_plan(oversized, request="ml_risk please")
+        assert len(plan) <= supervisor._MAX_HOPS
+
 
 class TestPlanRequest:
     def test_parses_llm_plan_and_resets_hop_state(self):
