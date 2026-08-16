@@ -35,7 +35,10 @@ class TestScoreFundComposition:
     def _conn_with_row(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
-        cur.fetchone.return_value = ("F1", "IE00TEST0001", 5.0, *([0.0] * len(ml_risk_agent.model.FEATURE_COLUMNS)))
+        cur.fetchone.return_value = (
+            "F1", "IE00TEST0001", "Europe Equity Large Cap", 5.0,
+            *([0.0] * len(ml_risk_agent.model.FEATURE_COLUMNS)),
+        )
         cur.description = [SimpleNamespace(name=c) for c in ml_risk_agent._SELECT_COLUMNS]
         return conn, cur
 

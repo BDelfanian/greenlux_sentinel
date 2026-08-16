@@ -71,22 +71,50 @@ class TestBuildFeatureMatrix:
         df.loc[df.index[0], "sector_healthcare"] = np.nan
         df.loc[df.index[1], "sector_healthcare"] = 10.0
         df.loc[df.index[2], "sector_healthcare"] = 20.0
-        X, _, medians = m.build_feature_matrix(df)
+        X, _, fit_stats = m.build_feature_matrix(df)
         assert X.loc[df.index[0], "sector_healthcare__missing"] == 1
         assert X.loc[df.index[1], "sector_healthcare__missing"] == 0
         # imputed value equals the column's own (fit) median
-        assert X.loc[df.index[0], "sector_healthcare"] == pytest.approx(medians["sector_healthcare"])
+        assert X.loc[df.index[0], "sector_healthcare"] == pytest.approx(fit_stats.medians["sector_healthcare"])
 
     def test_transform_only_uses_passed_medians_not_own_distribution(self):
         train_df = _synthetic_df(n_per_bucket=5, seed=1)
-        _, _, train_medians = m.build_feature_matrix(train_df)
+        _, _, train_fit_stats = m.build_feature_matrix(train_df)
 
         test_df = _synthetic_df(n_per_bucket=1, seed=2)
         test_df["sector_healthcare"] = np.nan  # force imputation on every row
-        X_test, _, medians_used = m.build_feature_matrix(test_df, medians=train_medians)
+        X_test, _, fit_stats_used = m.build_feature_matrix(test_df, fit_stats=train_fit_stats)
 
-        assert medians_used is train_medians
-        assert (X_test["sector_healthcare"] == train_medians["sector_healthcare"]).all()
+        assert fit_stats_used is train_fit_stats
+        assert (X_test["sector_healthcare"] == train_fit_stats.medians["sector_healthcare"]).all()
+
+    def test_category_rate_columns_present_and_sum_to_one(self):
+        df = _synthetic_df(n_per_bucket=5)
+        df["category"] = "Europe Equity Large Cap"
+        X, _, _ = m.build_feature_matrix(df)
+        for col in m.CATEGORY_RATE_COLUMNS:
+            assert col in X.columns
+        totals = X[m.CATEGORY_RATE_COLUMNS].sum(axis=1)
+        assert (totals.round(6) == 1.0).all()
+
+    def test_unseen_category_at_apply_time_falls_back_to_global_rate(self):
+        train_df = _synthetic_df(n_per_bucket=10, seed=7)
+        train_df["category"] = "Known Category"
+        _, _, fit_stats = m.build_feature_matrix(train_df)
+
+        test_df = _synthetic_df(n_per_bucket=1, seed=8)
+        test_df["category"] = "Never Seen Before"
+        X_test, _, _ = m.build_feature_matrix(test_df, fit_stats=fit_stats)
+
+        global_rates = fit_stats.category_rates["__global__"]
+        for bucket, col in zip(m.RATING_BUCKETS, m.CATEGORY_RATE_COLUMNS, strict=True):
+            assert X_test[col].tolist() == pytest.approx([global_rates[bucket]] * len(X_test))
+
+    def test_missing_category_column_falls_back_to_sentinel_not_a_crash(self):
+        df = _synthetic_df(n_per_bucket=3)  # no "category" column at all
+        X, _y, _fit_stats = m.build_feature_matrix(df)
+        assert len(X) == len(df)
+        assert set(m.CATEGORY_RATE_COLUMNS).issubset(X.columns)
 
 
 class TestGroups:

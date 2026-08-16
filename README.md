@@ -142,6 +142,13 @@ for how the multi-hop pipeline works, or [docs/PROGRESS_LOG.md](docs/PROGRESS_LO
 real bugs (an Azure AI Search OData filter, a schema gap on live Postgres) found and fixed while
 getting this working end to end.
 
+**Since Phase 9**, the same `multi_hop` pipeline can also plan an `ml_risk` hop — the trained
+composition-anomaly classifier — alongside `evidence`, so a question can combine a document-cited
+claim with a real, quantified ML signal (e.g. `composition_anomaly_score: 47.49`) in one
+synthesized answer, both independently citation-validated (`[doc:<id>]` / `[fact:<key>]`). The
+operator UI's "Try an example" chips include a question confirmed to route and retrieve this way —
+see [docs/PROGRESS_LOG.md](docs/PROGRESS_LOG.md)'s Phase 9c entry for the real transcript.
+
 ## Deployment
 
 Live on Azure — 11 distinct services, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#azure-service-map)
@@ -170,8 +177,10 @@ Vault read) than what was agreed. Infra changes stay a manual `az deployment gro
 - **Data:** Azure Database for PostgreSQL Flexible Server, Azure Cosmos DB (NoSQL/Core API)
 - **ML:** greenwashing-risk scoring model — a Tier 2 holdings-vs-claim consistency formula (4
   issuer-verified funds) plus a trained scikit-learn `RandomForestClassifier` (Tier 1, ~41k funds,
-  group-split accuracy 90.9%/macro-F1 0.910) flagging claimed sustainability ratings that look
-  atypical for a fund's objective portfolio composition — see
+  group-split accuracy 90.2%/macro-F1 0.904, incl. leakage-safe per-category rate encoding)
+  flagging claimed sustainability ratings that look atypical for a fund's objective portfolio
+  composition — combinable with real document evidence into one synthesized, cited answer via the
+  `multi_hop` route, live-verified end to end — see
   [docs/DATA.md](docs/DATA.md#tier-1-composition-anomaly-model-ml)
 - **BI:** Power BI, agent-driven dynamic report/dataset queries (not static dashboards)
 - **Cloud:** Microsoft Azure (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#azure-service-map) for the full service list)

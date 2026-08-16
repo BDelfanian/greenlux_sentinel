@@ -381,3 +381,37 @@ can't answer, so a portable (installer-free) Node.js zip was downloaded and extr
       quality — an instruction-heavy phrasing didn't surface the fund's own KIID in its top 5
       results, a more natural front-loaded phrasing did. Not a code bug; documented as a
       characteristic worth knowing when writing example questions (docs/PROGRESS_LOG.md).
+
+### Phase 9d — close remaining recommendations: ETL wiring, category encoding, UI/docs polish
+
+- [x] **`score_all_funds()` wired into `etl_agent.run_ingestion()`.** New
+      `_score_composition_anomalies(conn)` helper, called as a best-effort stage after the GLEIF
+      cross-check — a missing trained model artifact (e.g. a fresh environment's very first ETL
+      run) records `composition_anomaly_scoring_error` in the summary instead of failing the rest
+      of ingestion, unlike the required stages above. Closes the one open item from Phase 9b.
+- [x] **Category encoding added to the ML model, honestly evaluated.** `category` (295 values,
+      deferred in Phase 9) is now three leakage-safe features (`CATEGORY_RATE_COLUMNS`) — see
+      docs/DATA.md's Phase 9d section for the full methodology and the honest result: these
+      features are the **top 3 most important in the model**, yet held-out accuracy moved from
+      90.9%/0.910 (no category) to 90.2%/0.904 (with category) — essentially flat, reported exactly
+      as measured, not spun as an improvement. `FeatureFitStats` (bundling medians + category
+      rates) replaces the old bare-medians API throughout `ml/greenwashing_risk_model.py`.
+      `MODEL_VERSION` bumped to `tier1-composition-anomaly-v2`.
+- [x] `notebooks/02_ml_model_worked_example.ipynb` updated with a new category-encoding section
+      (real per-category rate examples, e.g. "Sector Equity Alternative Energy" funds claim High
+      94.8% of the time vs. 36.0% population-wide) and re-executed end to end, no errors.
+- [x] Operator UI: `AskForm.tsx` gained "Try an example" chips using phrasings confirmed live this
+      session to route/retrieve reliably — directly addresses the risk that a first-time visitor
+      lands on a cold-start abstention before ever seeing the system's real capability. `npm run
+      build` (Next.js + TypeScript) clean.
+- [x] README updated: real Phase 9d accuracy figure, and a new paragraph describing the `ml_risk`
+      multi-hop combination capability (previously undocumented in the README itself).
+- [ ] Demo GIF re-capture — pending live deployment of the UI changes above (see the unchecked
+      live-verification item below); the existing GIF still accurately shows the general
+      `sql`/`risk`/`evidence` multi-hop pattern, just not the newer `ml_risk` capability or the new
+      example chips.
+- [ ] **Not yet live-verified as of writing this checklist** — same pattern as every prior phase:
+      code is real, tested (262 tests passing, `ruff check .` clean), and will be deployed +
+      live-re-verified (including re-running the live Postgres backfill against the new
+      category-encoded model) before this item gets checked off — see docs/PROGRESS_LOG.md's
+      Phase 9d entry for the outcome once that happens, not assumed here in advance.

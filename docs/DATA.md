@@ -120,8 +120,9 @@ near-tautological).
 **Methodology, and why it matters:** ~6% of ISINs in the scorable population have more than one
 `fund_id` row (share classes of the same underlying fund, near-identical feature values). A naive
 row-level train/test split lets near-duplicates leak across the split and inflates the score —
-confirmed empirically (naive split: ~92.8% accuracy; the honest, methodologically-correct
-`GroupShuffleSplit` grouped by ISIN: ~90.7-90.9%). Imputation medians (for the structural
+confirmed empirically (naive split: ~92.8-92.9% accuracy; the honest, methodologically-correct
+`GroupShuffleSplit` grouped by ISIN: ~90.2-90.9%, depending on feature set — see Phase 9d below).
+Imputation medians (for the structural
 missingness below) are fit on the train fold only and applied unchanged to the test fold — a
 second, smaller leakage source avoided the same way. See
 `notebooks/02_ml_model_worked_example.ipynb` for this comparison reproduced live against the real
@@ -137,16 +138,31 @@ carry real signal, not noise.
 against the real local `data/raw/*.csv` files, 67,098 funds, 40,737 with a claimed rating,
 `GroupShuffleSplit` by ISIN):
 
-- **Classification (shipped model): accuracy 90.9%, macro-F1 0.910**, vs. a 38.4% most-frequent-
-  class baseline; confusion matrix diagonal-dominant across all three buckets, no collapsed class.
-- Top feature importances are intuitively sane — `market_cap_small`, `market_cap_giant`,
-  `sector_energy`, `involvement_thermal_coal`, `sector_technology`, `involvement_animal_testing` —
-  well-known real ESG-score drivers, another sanity check that the model learned a real pattern.
-- `category` (295 distinct values, confirmed no leakage-by-name of "sustainable/esg/sri" terms) is
-  left out of v1 — too high-cardinality for naive one-hot, and target/mean encoding needs
-  out-of-fold care not justified yet without a live DB to validate against. Deferred follow-up:
-  per-category peer normalization (compare a fund's anomaly score only against same-category
-  peers).
+- **Classification (shipped model, Phase 9d): accuracy 90.2%, macro-F1 0.904**, vs. a 38.4%
+  most-frequent-class baseline; confusion matrix diagonal-dominant across all three buckets, no
+  collapsed class.
+- Top feature importances are intuitively sane — since Phase 9d, `category_low_rate`/
+  `category_high_rate`/`category_medium_rate` (see below) are the top 3, ahead of
+  `sector_energy`, `market_cap_small`, `market_cap_giant`, `involvement_thermal_coal` — all
+  well-known real ESG-score drivers, a sanity check that the model learned a real pattern.
+- **Phase 9d — `category` encoding, added and honestly evaluated.** `category` (295 distinct
+  values, confirmed no leakage-by-name of "sustainable/esg/sri" terms) was originally left out of
+  v1 as a deferred follow-up (too high-cardinality for naive one-hot). Added as three features,
+  `category_low_rate`/`category_medium_rate`/`category_high_rate` — a Laplace-smoothed
+  (`_CATEGORY_SMOOTHING = 5.0`), train-fold-only empirical rate of Low/Medium/High claimed
+  ratings for funds in that same category, applied unchanged to the test fold and at score() time
+  (the exact fit-on-train/apply-to-test discipline already used for median imputation), falling
+  back to the global training-set rate for a rare/unseen category. **Honest result, not spun as a
+  clean win**: these three features are individually the *most important in the whole model* (see
+  above), yet held-out accuracy moved from 90.9%/0.910 (Phase 9, no category) to 90.2%/0.904
+  (Phase 9d, with category) — essentially flat, arguably a hair worse on this split, plausibly
+  because category is partially redundant with the sector/asset-class features already present
+  (a fund's category correlates with its typical sector tilt). Shipped anyway: the methodology is
+  sound (leakage-safe, matches existing discipline) and it closes a documented gap, but the
+  headline accuracy number should not be reported as "improved by category encoding" — it wasn't,
+  measurably. See `notebooks/02_ml_model_worked_example.ipynb` section 3 for the full comparison
+  reproduced live, including real per-category rate examples (e.g. "Sector Equity Alternative
+  Energy" funds claim High 94.8% of the time in the training data, vs. 36.0% population-wide).
 - A regression variant (predict continuous `sustainability_score` instead) was also validated,
   same split methodology: R²≈0.76, MAE≈1.0 (target std≈3.76) — comparably strong signal, not
   shipped as primary because the classification framing matches the existing Low/Medium/High

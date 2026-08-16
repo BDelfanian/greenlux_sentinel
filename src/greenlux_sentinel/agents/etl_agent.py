@@ -171,14 +171,44 @@ def cross_check_lu_entities(
     return matched
 
 
+def _score_composition_anomalies(conn: psycopg.Connection) -> dict[str, Any]:
+    """Batch-score every fund's Tier 1 composition-anomaly signal (Phase 9) against the
+    just-reloaded `funds` table and persist to `fund_sustainability_anomaly_scores`. Best-effort,
+    unlike the required stages in run_ingestion() above: a missing trained model artifact (e.g.
+    the very first ETL run on a fresh environment, before anyone has run
+    `ml.train_greenwashing_risk_model` yet) must not fail the rest of ingestion -- funds/holdings
+    data is still real and useful without a fresh anomaly score. Returns
+    {"composition_anomaly_scores_written": n} on success, or
+    {"composition_anomaly_scoring_error": str(e)} otherwise -- surfaced in run_ingestion()'s
+    summary either way, never silently swallowed.
+    """
+    from greenlux_sentinel.agents.ml_risk_agent import _resolve_model_path
+    from greenlux_sentinel.ml import greenwashing_risk_model as model
+    from greenlux_sentinel.ml.train_greenwashing_risk_model import (
+        load_training_data,
+        score_all_funds,
+    )
+
+    try:
+        trained = model.load_model(_resolve_model_path())
+        df = load_training_data(conn=conn)
+        written = score_all_funds(trained, df, conn=conn)
+        return {"composition_anomaly_scores_written": written}
+    except Exception as e:  # noqa: BLE001 -- best-effort stage, see docstring
+        return {"composition_anomaly_scoring_error": str(e)}
+
+
 def run_ingestion(
     data_dir: Path | None = None,
     conn: psycopg.Connection | None = None,
     container: ContainerProxy | None = None,
 ) -> dict[str, Any]:
     """Full ETL run: Tier 1 funds, Tier 2 descriptive (Top-100) holdings, Tier 2 verified
-    holdings, and a GLEIF cross-check of LU management companies. Returns a lineage summary; each
-    stage also writes its own audit_log row via the loader it calls.
+    holdings, a GLEIF cross-check of LU management companies, and (Phase 9c) a best-effort
+    Tier 1 composition-anomaly re-score keeping `fund_sustainability_anomaly_scores` in sync with
+    the freshly-reloaded `funds` data. Returns a lineage summary; each stage also writes its own
+    audit_log row via the loader it calls (`_score_composition_anomalies()` via
+    `score_all_funds()`'s own write_audit_log call).
 
     Accepts optional injected connections for testability/DI (same convention as every loader/
     agent this calls); opens (and closes) real ones from config.get_settings() when not
@@ -218,12 +248,14 @@ def run_ingestion(
             container=container,
         )
         gleif_matched = cross_check_lu_entities(conn)
+        anomaly_scoring = _score_composition_anomalies(conn)
 
         summary = {
             "funds_loaded": funds_loaded,
             "top100_holdings_docs": top100_holdings_docs,
             "verified_holdings_docs": verified_holdings_docs,
             "gleif_matched": gleif_matched,
+            **anomaly_scoring,
         }
         write_audit_log(
             conn,

@@ -5,11 +5,11 @@
 Loads Tier 1 fund data (live Postgres if credentials are configured, else the local
 `data/raw/*.csv` files directly — same DI pattern as etl/etl_agent.py), trains the classifier,
 prints the full metrics report, and saves the artifact via `greenwashing_risk_model.save_model()`.
+Live-verified against the real deployed Postgres since Phase 9b (docs/PROGRESS_LOG.md).
 
 `score_all_funds()` batch-scores every fund with a claimed rating and persists results to
-`fund_sustainability_anomaly_scores` — this is what a future pass would call from
-`etl_agent.run_ingestion()`; deliberately NOT wired in there yet (see docs/PROGRESS_LOG.md's
-Phase 9 entry for why this stays a standalone script for now).
+`fund_sustainability_anomaly_scores` — called from `agents/etl_agent.run_ingestion()` (Phase 9d,
+best-effort stage) as well as standalone from here.
 """
 
 from __future__ import annotations
@@ -29,15 +29,14 @@ if TYPE_CHECKING:
 
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "raw"
 
-_SELECT_COLUMNS = ["fund_id", "isin", "sustainability_rating", *model.FEATURE_COLUMNS]
+_SELECT_COLUMNS = ["fund_id", "isin", "category", "sustainability_rating", *model.FEATURE_COLUMNS]
 
 
 def load_training_data(conn: psycopg.Connection | None = None, data_dir: Path | None = None) -> pd.DataFrame:
     """Load the columns the model needs. If `conn` is given, SELECTs from live Postgres `funds`
-    (the production path — not live-verified as of Phase 9, no Azure Postgres credentials were
-    available in that session; see docs/PROGRESS_LOG.md). Otherwise transforms the local
-    `data/raw/*.csv` files directly via etl.load_funds_postgres.transform() — the exact same
-    column mapping the live loader uses, not a second parallel implementation."""
+    (the production path, live-verified since Phase 9b — see docs/PROGRESS_LOG.md). Otherwise
+    transforms the local `data/raw/*.csv` files directly via etl.load_funds_postgres.transform()
+    — the exact same column mapping the live loader uses, not a second parallel implementation."""
     if conn is not None:
         query = f"SELECT {', '.join(_SELECT_COLUMNS)} FROM funds"
         return pd.read_sql(query, conn)

@@ -103,6 +103,34 @@ class TestResolveDataDir:
             etl_agent._resolve_data_dir(empty_dir)
 
 
+class TestScoreCompositionAnomalies:
+    def test_scores_and_returns_written_count(self):
+        conn = MagicMock()
+        with (
+            patch("greenlux_sentinel.agents.ml_risk_agent._resolve_model_path", return_value=Path("model.joblib")),
+            patch("greenlux_sentinel.ml.greenwashing_risk_model.load_model", return_value="fake-bundle"),
+            patch("greenlux_sentinel.ml.train_greenwashing_risk_model.load_training_data", return_value="fake-df") as m_load,
+            patch("greenlux_sentinel.ml.train_greenwashing_risk_model.score_all_funds", return_value=41) as m_score,
+        ):
+            result = etl_agent._score_composition_anomalies(conn)
+
+        assert result == {"composition_anomaly_scores_written": 41}
+        m_load.assert_called_once_with(conn=conn)
+        m_score.assert_called_once_with("fake-bundle", "fake-df", conn=conn)
+
+    def test_missing_model_artifact_is_best_effort_not_raised(self):
+        # No trained artifact yet (e.g. a fresh environment's very first ETL run) must not fail
+        # the whole ingestion run -- see _score_composition_anomalies()'s own docstring.
+        conn = MagicMock()
+        with patch(
+            "greenlux_sentinel.agents.ml_risk_agent._resolve_model_path",
+            side_effect=FileNotFoundError("no artifact"),
+        ):
+            result = etl_agent._score_composition_anomalies(conn)
+
+        assert result == {"composition_anomaly_scoring_error": "no artifact"}
+
+
 class TestRunIngestion:
     def test_orchestrates_all_stages_and_commits(self):
         conn = MagicMock()
@@ -116,8 +144,14 @@ class TestRunIngestion:
             patch("greenlux_sentinel.etl.load_esg_cosmos.load", return_value=4) as mock_top100,
             patch("greenlux_sentinel.etl.load_verified_holdings_cosmos.load", return_value=5) as mock_verified,
             patch("greenlux_sentinel.agents.etl_agent.cross_check_lu_entities", return_value=3) as mock_gleif,
+            patch(
+                "greenlux_sentinel.agents.etl_agent._score_composition_anomalies",
+                return_value={"composition_anomaly_scores_written": 7},
+            ) as mock_score,
         ):
             summary = etl_agent.run_ingestion(data_dir=data_dir, conn=conn, container=container)
+
+        mock_score.assert_called_once_with(conn)
 
         mock_funds.assert_called_once_with(
             data_dir / "morningstar_european_mutual_funds.csv", data_dir / "morningstar_european_etfs.csv", conn=conn
@@ -135,6 +169,7 @@ class TestRunIngestion:
             "top100_holdings_docs": 4,
             "verified_holdings_docs": 5,
             "gleif_matched": 3,
+            "composition_anomaly_scores_written": 7,
         }
         audit_calls = [c for c in cur.execute.call_args_list if "audit_log" in c.args[0]]
         assert len(audit_calls) == 1

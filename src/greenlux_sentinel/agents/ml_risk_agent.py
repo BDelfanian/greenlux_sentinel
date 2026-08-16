@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     import psycopg
     from azure.storage.blob import ContainerClient
 
-_SELECT_COLUMNS = ["fund_id", "isin", "sustainability_rating", *model.FEATURE_COLUMNS]
+_SELECT_COLUMNS = ["fund_id", "isin", "category", "sustainability_rating", *model.FEATURE_COLUMNS]
 
 _MODEL_BLOB_CONTAINER_NAME = "landing"
 _MODEL_BLOB_NAME = "models/greenwashing_rating_classifier.joblib"
