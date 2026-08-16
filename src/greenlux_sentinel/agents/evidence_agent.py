@@ -5,10 +5,15 @@ nothing retrieved actually supports an answer.
 
 Responsibility (docs/ARCHITECTURE.md#agent-graph-langgraph):
     Given a question and an optional fund_id, looks up that fund's Tier 1 facts (name, category,
-    claimed sustainability rating — same funds table read as report_agent._fetch_fund_facts),
-    retrieves matching document passages (that fund's own KIID/prospectus plus the general
-    SFDR/CSSF regulatory corpus — see search_server.hybrid_search's OR-shaped filter), and drafts
-    a cited answer. Enforced by guardrails/grounding.py's document_grounded_or_abstained()
+    claimed sustainability rating — same funds table read as report_agent._fetch_fund_facts, or
+    whatever a multi-hop caller passed as precomputed_facts, e.g. a risk_score/
+    composition_anomaly_score from the risk/ml_risk hops — see agents/supervisor.py), retrieves
+    matching document passages (that fund's own KIID/prospectus plus the general SFDR/CSSF
+    regulatory corpus — see search_server.hybrid_search's OR-shaped filter), and drafts a cited
+    answer: a [doc:<id>] marker for a document-sourced claim, a [fact:<key>] marker (Phase 9c) for
+    a facts-sourced claim — two distinct forms, not one conflated marker, so a numeric signal like
+    composition_anomaly_score never has to masquerade as document-grounded to pass the guardrail.
+    Enforced by guardrails/grounding.py's document_grounded_or_abstained()
     (docs/RESPONSIBLE_AI.md#principles, Principle 5) before the answer is returned.
 
 HUMAN-IN-THE-LOOP GATE: none directly — read-only, same autonomy class as sql_agent/risk_agent/
@@ -36,10 +41,14 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 _DRAFT_SYSTEM_PROMPT = """You are answering an analyst's question using ONLY the facts and \
-retrieved document passages listed below. For every claim, cite the exact passage it came from \
-using a [doc:<id>] marker immediately after the claim. If the facts and passages below do not \
-contain enough information to answer, reply with EXACTLY: I don't know -- insufficient evidence. \
-Do not guess or use outside knowledge. Plain text only, no markdown, no headers.
+retrieved document passages listed below. For every claim, cite where it came from immediately \
+after the claim: a [doc:<id>] marker (matching a passage's exact id) for a claim sourced from a \
+retrieved passage, or a [fact:<key>] marker (matching a fact's exact key, e.g. \
+[fact:composition_anomaly_score]) for a claim sourced from the Facts list -- a fact is already \
+tool-sourced, it does not need a document to cite, but it still needs its own [fact:<key>] \
+marker, not a bare number. If the facts and passages below do not contain enough information to \
+answer, reply with EXACTLY: I don't know -- insufficient evidence. Do not guess or use outside \
+knowledge. Plain text only, no markdown, no headers.
 
 Facts:
 {facts}
@@ -50,8 +59,9 @@ Retrieved passages:
 
 _STRICT_SUFFIX = (
     "\n\nSTRICT: every claim must carry a [doc:<id>] marker citing one of the exact passage ids "
-    "listed above; if you cannot support the answer this way, reply with EXACTLY: I don't know "
-    "-- insufficient evidence."
+    "listed above, or a [fact:<key>] marker citing one of the exact fact keys listed above; if "
+    "you cannot support the answer this way, reply with EXACTLY: I don't know -- insufficient "
+    "evidence."
 )
 
 _FALLBACK_ABSTENTION = f"{grounding.DEFAULT_ABSTENTION_MARKER} -- unable to produce a fully cited answer."
@@ -109,14 +119,19 @@ def _draft_answer(question: str, facts_text: str, passages_text: str, llm: BaseC
 
 
 def _draft_validated_answer(
-    question: str, facts_text: str, passages_text: str, retrieved_doc_ids: set[str], llm: BaseChatModel
+    question: str,
+    facts_text: str,
+    passages_text: str,
+    retrieved_doc_ids: set[str],
+    known_fact_keys: set[str],
+    llm: BaseChatModel,
 ) -> str:
     answer = validators.redact_pii(_draft_answer(question, facts_text, passages_text, llm))
-    if grounding.document_grounded_or_abstained(answer, retrieved_doc_ids):
+    if grounding.document_grounded_or_abstained(answer, retrieved_doc_ids, known_fact_keys):
         return answer
 
     answer = validators.redact_pii(_draft_answer(question, facts_text, passages_text + _STRICT_SUFFIX, llm))
-    if grounding.document_grounded_or_abstained(answer, retrieved_doc_ids):
+    if grounding.document_grounded_or_abstained(answer, retrieved_doc_ids, known_fact_keys):
         return answer
 
     return _FALLBACK_ABSTENTION
@@ -163,7 +178,7 @@ def answer_with_evidence(
             or "(no documents retrieved)"
         )
 
-        answer = _draft_validated_answer(question, facts_text, passages_text, retrieved_doc_ids, llm)
+        answer = _draft_validated_answer(question, facts_text, passages_text, retrieved_doc_ids, set(facts), llm)
         abstained = answer.strip().lower().startswith(grounding.DEFAULT_ABSTENTION_MARKER.lower())
         cited_ids = set(_CITATION_RE.findall(answer))
         document_citations = [p for p in passages if p["id"] in cited_ids]

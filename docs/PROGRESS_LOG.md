@@ -10,6 +10,51 @@ that supersedes it; the history of *why* decisions changed is as valuable as the
 
 ---
 
+## Phase 9c — fix the fact-citation abstention gap found by live testing
+
+**Completed:** 2026-08-16
+
+**Done:** Phase 9b's live testing (previous entry) surfaced a real gap: `ml_risk`'s fact was
+correctly gathered and passed to `evidence_agent`, but the final synthesized answer still
+abstained. Root cause, confirmed with real data (not guessed): `_DRAFT_SYSTEM_PROMPT` required a
+`[doc:<id>]` marker on *every* claim, and a precomputed numeric fact (`composition_anomaly_score`)
+has no document id to cite, so the guardrail-following LLM conservatively declined to state it.
+
+Confirmed via two live UI tests before fixing:
+- `F00000W9IL` (a non-issuer-verified fund) abstained -- but for a *different*, correct reason:
+  it has no KIID in the document index at all (only the 5 issuer-verified ETFs do), confirmed by
+  querying `search_server.hybrid_search()` directly against the live index.
+- `0P0001EVL3` (iShares MSCI USA ESG Screened, one of the 5 that *does* have a real KIID indexed)
+  also abstained, and this time direct verification ruled out the "no evidence" explanation: the
+  live index returned two real, on-topic KIID chunks
+  (`kiid_SASU_ie00bfnm3g45_2`/`_3`, real exclusion-criteria text -- thermal coal, tobacco,
+  weapons, palm oil, arctic oil/gas, UN Global Compact violations) *and* the real
+  `composition_anomaly_score: 47.49`. Everything needed to answer was present; the model still
+  abstained -- isolating the citation-form gap as the actual cause, not a retrieval problem.
+
+**Fix**: `guardrails/grounding.py`'s `document_grounded_or_abstained()` now accepts a second
+citation form, `[fact:<key>]`, alongside `[doc:<id>]` -- validated against a new `known_fact_keys`
+parameter (the real keys of whatever `precomputed_facts`/Tier-1-facts dict was actually built),
+not accepted on trust. `evidence_agent._DRAFT_SYSTEM_PROMPT`/`_STRICT_SUFFIX` updated to teach the
+model both forms explicitly. Backward compatible: `known_fact_keys` defaults to none, so every
+existing doc-only caller (including report_agent's separate numeric-citations guardrail, untouched)
+keeps its exact prior behavior -- confirmed by the full existing test suite passing unchanged.
+
+7 new tests (6 in `test_grounding.py`, 2 in `test_evidence_agent.py` -- one reproducing the exact
+live scenario: a fact-cited claim must be accepted, not abstained; one confirming a citation to a
+key that was never actually supplied still correctly fails) -- 255 tests total passing, `ruff
+check .` clean.
+
+**Deviations from the original plan:** none -- this was scoped exactly to the fix proposed
+(two-marker citation, not a broader guardrail rewrite), per the user's "sure, fix it."
+
+**Next step:** re-run the same live UI test (`0P0001EVL3` + the composition-anomaly question from
+Phase 9b, once this fix is deployed) to confirm the fix holds against the real live LLM, not just
+the fake-LLM unit tests -- not yet done as of this entry, since it requires another deploy-approve
+cycle. Also still open from Phase 9b: wiring `score_all_funds()` into `etl_agent.run_ingestion()`.
+
+---
+
 ## Phase 9b (live) — deploying and live-verifying the ML signal, end to end
 
 **Completed:** 2026-08-16

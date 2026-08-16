@@ -30,15 +30,23 @@
 4. **PII redaction.** Any free-text fields ingested (e.g. company descriptions) pass through a
    redaction step before being stored or surfaced, even though the datasets in use are
    company/fund-level, not individual-level — defensive by default.
-5. **Document-grounded claims must cite a retrieved passage or abstain.** The Evidence Agent
-   (Phase 8b) is not allowed to answer a question requiring document evidence without either
-   citing a real, retrieved document id (`[doc:<id>]`) for every claim, or explicitly answering
-   "I don't know" when nothing it retrieved actually supports an answer. Enforced by
+5. **Grounded claims must cite their source or abstain.** The Evidence Agent (Phase 8b) is not
+   allowed to answer a question without either citing a real source for every claim, or explicitly
+   answering "I don't know" when nothing it has actually supports an answer. Two distinct citation
+   forms, not one conflated marker: `[doc:<id>]` for a claim sourced from a real, retrieved
+   document passage, `[fact:<key>]` (Phase 9c) for a claim sourced from a precomputed
+   tool-sourced fact (e.g. `composition_anomaly_score`) that has no document to cite. Enforced by
    `guardrails/grounding.py`'s `document_grounded_or_abstained()`, the same reject/regenerate
-   pattern as Principle 2, extended from *numeric* tool-sourcing to *document-citation*
-   tool-sourcing. Like Principle 3's risk-score caveat, this is a citation-validity check, not
-   full semantic/entailment verification — it confirms a cited document was actually retrieved
-   this run, not that the document's text truly supports the specific claim made about it.
+   pattern as Principle 2, extended from *numeric* tool-sourcing to *citation-marker* tool-sourcing
+   for both forms. Like Principle 3's risk-score caveat, this is a citation-validity check, not
+   full semantic/entailment verification — it confirms a cited document was actually retrieved (or
+   a cited fact actually supplied) this run, not that the source truly supports the specific claim
+   made about it. **Phase 9c correction**: the original single-marker design required a `[doc:<id>]`
+   on every claim including numeric facts, which had no document to cite — live testing found this
+   made the model abstain even when it had a real, tool-sourced number to state (see
+   docs/PROGRESS_LOG.md's Phase 9c entry for the live transcript that surfaced it). The two-marker
+   design fixes that without weakening the guardrail: a `[fact:<key>]` is still checked against the
+   real facts actually supplied, not accepted on trust.
 
 ## Human-in-the-loop gates
 

@@ -88,6 +88,45 @@ class TestAnswerWithEvidence:
 
         m.assert_called_once_with("Is this fund Article 8?", isin="IE00BYVJRR92", search_client=None)
 
+    def test_fact_cited_answer_is_grounded_not_abstained(self):
+        # Reproduces the real live finding (docs/PROGRESS_LOG.md's Phase 9c entry): a claim
+        # sourced purely from a precomputed fact (no matching document) must be accepted, not
+        # forced into an abstention just because it has no [doc:<id>] to attach.
+        conn = MagicMock()
+        answer = (
+            "The composition anomaly score is 47.49 [fact:composition_anomaly_score], "
+            "consistent with the KIID's exclusion criteria [doc:kiid_1_0]."
+        )
+        llm = SequentialFakeLLM([answer])
+
+        with (
+            patch("greenlux_sentinel.agents.evidence_agent.retrieve_evidence", return_value=_PASSAGES),
+            patch("greenlux_sentinel.mcp_servers.postgres_server.write_audit_log"),
+        ):
+            result = evidence_agent.answer_with_evidence(
+                "Is the score consistent with the KIID?",
+                conn=conn,
+                llm=llm,
+                precomputed_facts={"composition_anomaly_score": 47.49},
+            )
+
+        assert result["abstained"] is False
+        assert "[fact:composition_anomaly_score]" in result["answer"]
+
+    def test_fact_citation_referencing_an_unsupplied_key_falls_back_to_abstention(self):
+        conn = MagicMock()
+        llm = SequentialFakeLLM(["The score is 47.49 [fact:made_up_key].", "The score is 47.49 [fact:made_up_key]."])
+
+        with (
+            patch("greenlux_sentinel.agents.evidence_agent.retrieve_evidence", return_value=_PASSAGES),
+            patch("greenlux_sentinel.mcp_servers.postgres_server.write_audit_log"),
+        ):
+            result = evidence_agent.answer_with_evidence(
+                "Q?", conn=conn, llm=llm, precomputed_facts={"composition_anomaly_score": 47.49}
+            )
+
+        assert result["abstained"] is True
+
     def test_numeric_facts_are_collected_as_citations(self):
         conn = MagicMock()
         llm = SequentialFakeLLM(["Cited [doc:kiid_1_0]."])
